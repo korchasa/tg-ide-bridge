@@ -1,0 +1,36 @@
+{
+  "workspace": ["./engine"],
+  "imports": {
+    "@std/assert": "jsr:@std/assert@^1.0.19",
+    "@std/path": "jsr:@std/path@^1.1.4",
+    "@std/semver": "jsr:@std/semver@^1.0.0",
+    "@std/fs": "jsr:@std/fs@^1.0.0",
+    "@korchasa/ai-ide-cli": "jsr:@korchasa/ai-ide-cli@^0.1.18"
+  },
+  "tasks": {
+    "check": "deno run -A scripts/check.ts",
+    "test": "deno test -A",
+    "dev": "deno run --watch --env-file=.env -A engine/cli.ts",
+    "prod": "deno run --env-file=.env -A engine/cli.ts",
+    "fmt": "deno fmt"
+  },
+  "fmt": {
+    "proseWrap": "preserve",
+    "exclude": [
+      "**/*.md",
+      ".claude/"
+    ]
+  },
+  "lint": {
+    "exclude": [
+      ".claude/"
+    ]
+  },
+  "compilerOptions": {
+    "strict": true,
+    "noImplicitAny": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true
+  }
+}

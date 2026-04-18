@@ -1,0 +1,4 @@
+.tg-ide-bridge/
+.env
+documents/tasks/
+.DS_Store
