@@ -259,12 +259,12 @@ When the root cause is outside your control (missing API keys/URLs, missing gene
 - When writing scripts, respect the `NO_COLOR` env var (https://no-color.org/) — disable ANSI colors when it is set.
 
 ### Standard Interface
-- `check` — the main command for comprehensive project verification. Runs the following steps in order:
-  - build the project
+- `check` — the main command for comprehensive project verification. Runs the following steps in parallel and fails on any non-zero:
+  - code formatting check (`deno fmt --check`)
+  - static code analysis (`deno lint`, strict rule set)
   - comment-scan: "TODO", "FIXME", "HACK", "XXX", debugger calls, linter and formatter suppression markers
-  - code formatting check
-  - static code analysis
-  - all project tests
+  - typecheck all `.ts` files (`deno check`)
+  - all project tests (`deno test -A`, typecheck enabled)
 - `test <path>` — runs a single test file or test suite.
 - `dev` — runs the application in development mode with watch mode enabled.
 - `prod` — runs the application in production mode.
@@ -278,7 +278,7 @@ Configured via `deno.json` tasks (run with `deno task <name>`):
 - `fmt` → `deno fmt` — formatter.
 
 ### Command Scripts
-- `scripts/check.ts` — orchestrates: `deno fmt --check` → `deno lint` → comment-scan → `deno test -A`. Exits non-zero on first failure.
+- `scripts/check.ts` — runs `deno fmt --check`, `deno lint`, comment-scan, `deno check <all .ts>`, `deno test -A` in parallel. Exits non-zero if any step fails.
 
 ## Code Documentation
 

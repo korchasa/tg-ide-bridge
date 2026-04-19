@@ -9,9 +9,6 @@ function cfg(overrides: Partial<Config> = {}): Config {
     allowed_chat_ids: [100, 200],
     ide: "claude",
     project_dir: "/tmp",
-    ide_timeout_seconds: 600,
-    ide_max_retries: 1,
-    ide_retry_delay_seconds: 2,
     ...overrides,
   };
 }

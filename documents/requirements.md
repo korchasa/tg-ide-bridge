@@ -115,4 +115,4 @@
 - **Criteria:**
   - [x] Daemon starts in a project folder, connects to TG, responds to a test message routed through the configured AI IDE, and preserves session across a restart. Evidence: `engine/cli.ts::main` wires config → `Sender.getMe` health check → `Poller` → `Dispatcher` with `SessionStore`; tests `engine/dispatcher_test.ts::Dispatcher invokes IDE and chunks output back to chat` (message → IDE → chat) and `…persists session token and resumes on next call` (restart-equivalent resume via `SessionStore` load/save); manual smoke documented in `README.md`.
   - [x] Unauthorized chats cannot trigger commands. Evidence: tests in `engine/auth_test.ts` (`isAllowed` semantics) — `engine/cli.ts` applies `isAllowed` as a hard gate before every `dispatcher.handle`.
-  - [x] `check` passes (fmt, lint, tests). Evidence: `deno task check` executes `scripts/check.ts` (fmt, lint, comment-scan, tests) and reports green.
+  - [x] `check` passes (fmt, lint, typecheck, tests). Evidence: `deno task check` executes `scripts/check.ts` (fmt, lint with strict rule set, comment-scan, `deno check` over all `.ts`, `deno test -A`) in parallel and reports green.

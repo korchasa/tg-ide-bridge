@@ -25,7 +25,26 @@
   "lint": {
     "exclude": [
       ".claude/"
-    ]
+    ],
+    "rules": {
+      "tags": ["recommended"],
+      "include": [
+        "ban-untagged-todo",
+        "default-param-last",
+        "eqeqeq",
+        "explicit-module-boundary-types",
+        "guard-for-in",
+        "no-eval",
+        "no-external-import",
+        "no-non-null-asserted-optional-chain",
+        "no-self-compare",
+        "no-sparse-arrays",
+        "no-sync-fn-in-async-fn",
+        "no-throw-literal",
+        "no-useless-rename",
+        "triple-slash-reference"
+      ]
+    }
   },
   "compilerOptions": {
     "strict": true,

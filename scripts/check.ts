@@ -27,8 +27,10 @@ const dim = (s: string) => color("2", s);
 async function runCmd(name: string, cmd: string[]): Promise<CheckResult> {
   const start = performance.now();
   console.log(dim(`▶ ${name} …`));
-  const p = new Deno.Command(cmd[0], {
-    args: cmd.slice(1),
+  const [bin, ...rest] = cmd;
+  if (bin === undefined) throw new Error(`empty command for check '${name}'`);
+  const p = new Deno.Command(bin, {
+    args: rest,
     stdout: "piped",
     stderr: "piped",
     env: { NO_COLOR: "1" },
@@ -85,9 +87,10 @@ async function commentScan(): Promise<CheckResult> {
       const text = await Deno.readTextFile(path);
       const lines = text.split("\n");
       for (let i = 0; i < lines.length; i++) {
+        const line = lines[i] ?? "";
         for (const p of patterns) {
-          if (p.test(lines[i])) {
-            hits.push(`${path}:${i + 1}: ${lines[i].trim()}`);
+          if (p.test(line)) {
+            hits.push(`${path}:${i + 1}: ${line.trim()}`);
             break;
           }
         }
@@ -104,14 +107,47 @@ async function commentScan(): Promise<CheckResult> {
   return { name: "comment-scan", ok, output, durationMs };
 }
 
+async function collectTsFiles(): Promise<string[]> {
+  const exts = new Set([".ts", ".tsx"]);
+  const excludeDirs = new Set([
+    ".git",
+    "node_modules",
+    ".claude",
+    "dist",
+    "build",
+  ]);
+  const out: string[] = [];
+  async function walk(dir: string): Promise<void> {
+    for await (const entry of Deno.readDir(dir)) {
+      const path = `${dir}/${entry.name}`;
+      if (entry.isDirectory) {
+        if (excludeDirs.has(entry.name)) continue;
+        await walk(path);
+        continue;
+      }
+      if (!entry.isFile) continue;
+      const dot = entry.name.lastIndexOf(".");
+      const ext = dot === -1 ? "" : entry.name.slice(dot);
+      if (exts.has(ext)) out.push(path);
+    }
+  }
+  await walk(".");
+  return out;
+}
+
+async function typecheck(): Promise<CheckResult> {
+  const files = await collectTsFiles();
+  return await runCmd("typecheck", ["deno", "check", ...files]);
+}
+
 const checks: Check[] = [
   { name: "fmt", run: () => runCmd("fmt", ["deno", "fmt", "--check"]) },
   { name: "lint", run: () => runCmd("lint", ["deno", "lint"]) },
   { name: "comment-scan", run: commentScan },
+  { name: "typecheck", run: typecheck },
   {
     name: "test",
-    run: () =>
-      runCmd("test", ["deno", "test", "-A", "--no-check", "--permit-no-files"]),
+    run: () => runCmd("test", ["deno", "test", "-A", "--permit-no-files"]),
   },
 ];
 
