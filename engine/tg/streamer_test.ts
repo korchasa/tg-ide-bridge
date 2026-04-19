@@ -309,6 +309,203 @@ Deno.test("LiveHandle HTML-escapes <, >, & in stream content", async () => {
   );
 });
 
+Deno.test("LiveHandle.appendEvent renders Read tool with 📖 emoji and <code>-wrapped path", async () => {
+  const { sender, calls } = mockSender();
+  const clock = new ManualClock();
+  const streamer = new Streamer({ sender, clock });
+  const live = await streamer.open(42);
+  live.appendEvent({
+    type: "assistant",
+    message: {
+      content: [
+        {
+          type: "tool_use",
+          name: "Read",
+          input: { file_path: "engine/cli.ts" },
+        },
+      ],
+    },
+  });
+  await live.finalize("ok");
+  const text = String(
+    calls.filter((c) => c.method === "editMessageText").at(-1)!.body.text,
+  );
+  assertStringIncludes(text, "📖");
+  assertStringIncludes(text, "<b>Read</b>");
+  assertStringIncludes(text, "<code>engine/cli.ts</code>");
+});
+
+Deno.test("LiveHandle.appendEvent renders Bash with description fallback", async () => {
+  const { sender, calls } = mockSender();
+  const clock = new ManualClock();
+  const streamer = new Streamer({ sender, clock });
+  const live = await streamer.open(42);
+  live.appendEvent({
+    type: "assistant",
+    message: {
+      content: [
+        {
+          type: "tool_use",
+          name: "Bash",
+          input: { command: "ls -la", description: "List dir" },
+        },
+      ],
+    },
+  });
+  await live.finalize("ok");
+  const text = String(
+    calls.filter((c) => c.method === "editMessageText").at(-1)!.body.text,
+  );
+  assertStringIncludes(text, "🐚");
+  assertStringIncludes(text, "<b>Bash</b>");
+  assertStringIncludes(text, "List dir");
+});
+
+Deno.test("LiveHandle.appendEvent renders Bash command in <code> when no description", async () => {
+  const { sender, calls } = mockSender();
+  const clock = new ManualClock();
+  const streamer = new Streamer({ sender, clock });
+  const live = await streamer.open(42);
+  live.appendEvent({
+    type: "assistant",
+    message: {
+      content: [
+        { type: "tool_use", name: "Bash", input: { command: "ls -la" } },
+      ],
+    },
+  });
+  await live.finalize("ok");
+  const text = String(
+    calls.filter((c) => c.method === "editMessageText").at(-1)!.body.text,
+  );
+  assertStringIncludes(text, "<code>ls -la</code>");
+});
+
+Deno.test("LiveHandle.appendEvent renders Grep with pattern and path", async () => {
+  const { sender, calls } = mockSender();
+  const clock = new ManualClock();
+  const streamer = new Streamer({ sender, clock });
+  const live = await streamer.open(42);
+  live.appendEvent({
+    type: "assistant",
+    message: {
+      content: [
+        {
+          type: "tool_use",
+          name: "Grep",
+          input: { pattern: "foo", path: "engine" },
+        },
+      ],
+    },
+  });
+  await live.finalize("ok");
+  const text = String(
+    calls.filter((c) => c.method === "editMessageText").at(-1)!.body.text,
+  );
+  assertStringIncludes(text, "🔍");
+  assertStringIncludes(text, "<code>/foo/</code>");
+  assertStringIncludes(text, "<code>engine</code>");
+});
+
+Deno.test("LiveHandle.appendEvent renders text block with 💬 emoji", async () => {
+  const { sender, calls } = mockSender();
+  const clock = new ManualClock();
+  const streamer = new Streamer({ sender, clock });
+  const live = await streamer.open(42);
+  live.appendEvent({
+    type: "assistant",
+    message: {
+      content: [{ type: "text", text: "thinking out loud" }],
+    },
+  });
+  await live.finalize("ok");
+  const text = String(
+    calls.filter((c) => c.method === "editMessageText").at(-1)!.body.text,
+  );
+  assertStringIncludes(text, "💬 thinking out loud");
+});
+
+Deno.test("LiveHandle.appendEvent renders system init with model", async () => {
+  const { sender, calls } = mockSender();
+  const clock = new ManualClock();
+  const streamer = new Streamer({ sender, clock });
+  const live = await streamer.open(42);
+  live.appendEvent({
+    type: "system",
+    subtype: "init",
+    model: "claude-opus-4-7",
+  });
+  await live.finalize("ok");
+  const text = String(
+    calls.filter((c) => c.method === "editMessageText").at(-1)!.body.text,
+  );
+  assertStringIncludes(text, "⚙️");
+  assertStringIncludes(text, "<code>claude-opus-4-7</code>");
+});
+
+Deno.test("LiveHandle.appendEvent uses fallback emoji for unknown tool", async () => {
+  const { sender, calls } = mockSender();
+  const clock = new ManualClock();
+  const streamer = new Streamer({ sender, clock });
+  const live = await streamer.open(42);
+  live.appendEvent({
+    type: "assistant",
+    message: {
+      content: [{ type: "tool_use", name: "MysteryTool", input: {} }],
+    },
+  });
+  await live.finalize("ok");
+  const text = String(
+    calls.filter((c) => c.method === "editMessageText").at(-1)!.body.text,
+  );
+  assertStringIncludes(text, "🛠️");
+  assertStringIncludes(text, "<b>MysteryTool</b>");
+});
+
+Deno.test("LiveHandle.appendEvent escapes HTML in tool input", async () => {
+  const { sender, calls } = mockSender();
+  const clock = new ManualClock();
+  const streamer = new Streamer({ sender, clock });
+  const live = await streamer.open(42);
+  live.appendEvent({
+    type: "assistant",
+    message: {
+      content: [
+        {
+          type: "tool_use",
+          name: "Bash",
+          input: { command: "echo '<script>'" },
+        },
+      ],
+    },
+  });
+  await live.finalize("ok");
+  const text = String(
+    calls.filter((c) => c.method === "editMessageText").at(-1)!.body.text,
+  );
+  assertStringIncludes(text, "&lt;script&gt;");
+  assert(!text.includes("<script>"), "raw <script> must not leak");
+});
+
+Deno.test("LiveHandle.appendEvent skips unknown event types", async () => {
+  const { sender, calls } = mockSender();
+  const clock = new ManualClock();
+  const streamer = new Streamer({ sender, clock });
+  const live = await streamer.open(42);
+  live.appendEvent({ type: "result", subtype: "success" });
+  live.appendEvent({ type: "user", message: { content: [] } });
+  await live.finalize("ok");
+  const edits = calls.filter((c) => c.method === "editMessageText");
+  // No content rendered → finalize should produce no edit (or empty body skipped).
+  assertEquals(
+    edits.length,
+    0,
+    `unknown events must not emit edits, got: ${
+      edits.map((e) => e.body.text).join(" | ")
+    }`,
+  );
+});
+
 Deno.test("LiveHandle.appendFinal renders final text outside the blockquote", async () => {
   const { sender, calls } = mockSender();
   const clock = new ManualClock();

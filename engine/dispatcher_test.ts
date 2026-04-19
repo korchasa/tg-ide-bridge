@@ -406,7 +406,7 @@ Deno.test("Dispatcher /reset replies even without session store", async () => {
   assertEquals(sends[0]!.body.text, "session cleared");
 });
 
-Deno.test("Dispatcher streams onOutput lines through Streamer to TG edits", async () => {
+Deno.test("Dispatcher streams onEvent through Streamer to TG edits", async () => {
   const { fetchFn, calls } = fakeFetch();
   const sender = new Sender("t", { fetchFn });
   const streamer = new Streamer({
@@ -423,8 +423,19 @@ Deno.test("Dispatcher streams onOutput lines through Streamer to TG edits", asyn
   });
   const ide = new FakeAdapter();
   ide.setHandler((opts: RuntimeInvokeOptions) => {
-    opts.onOutput?.("[stream] tool: Read engine/cli.ts");
-    opts.onOutput?.("[stream] text: hello");
+    opts.onEvent?.({
+      type: "assistant",
+      message: {
+        content: [
+          {
+            type: "tool_use",
+            name: "Read",
+            input: { file_path: "engine/cli.ts" },
+          },
+          { type: "text", text: "hello" },
+        ],
+      },
+    });
     return { output: okOutput({ result: "final answer", session_id: "s" }) };
   });
   const d = new Dispatcher({
@@ -440,7 +451,11 @@ Deno.test("Dispatcher streams onOutput lines through Streamer to TG edits", asyn
   assertEquals(sends.length, 1, "single live message opened");
   assert(edits.length >= 1, "at least one edit with streamed content");
   const finalText = edits.at(-1)!.body.text as string;
-  assertStringIncludes(finalText, "tool: Read engine/cli.ts");
+  assertStringIncludes(finalText, "📖");
+  assertStringIncludes(finalText, "<b>Read</b>");
+  assertStringIncludes(finalText, "<code>engine/cli.ts</code>");
+  assertStringIncludes(finalText, "💬");
+  assertStringIncludes(finalText, "hello");
   assertStringIncludes(finalText, "final answer");
   assert(!finalText.includes("✓"), `OK marker must not appear: ${finalText}`);
 });

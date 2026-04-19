@@ -344,7 +344,6 @@ export class Dispatcher {
         permissionMode: eff.permissionMode,
         model: eff.model,
         extraArgs,
-        onOutput: (line) => live.appendOutput(line),
         onEvent: (event) => live.appendEvent(event),
       });
       if (!res.output) {

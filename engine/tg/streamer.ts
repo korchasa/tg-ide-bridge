@@ -10,6 +10,11 @@
  * Rendering uses Bot API `parse_mode: "HTML"`. Stream events go inside a
  * `<blockquote expandable>…</blockquote>` (collapsible in TG clients); the
  * final assistant result is appended underneath as plain escaped text.
+ *
+ * The stream buffer holds pre-escaped HTML (each line is a complete chunk);
+ * `appendOutput` escapes raw text on the way in, while `appendEvent` runs the
+ * rich renderer that emits emoji + `<code>`-wrapped arguments for known IDE
+ * tools.
  */
 
 import type { Sender } from "./sender.ts";
@@ -50,6 +55,26 @@ const ROLLOVER_MARKER = "\n…";
 const ERR_PREFIX = "\n\n<b>✗</b> ";
 const STREAM_PREFIX_RE = /^\[stream\](?:\s+|$)/;
 const TEXT_PREFIX_RE = /^text:\s*/;
+
+const TOOL_EMOJI: Record<string, string> = {
+  Read: "📖",
+  Write: "📝",
+  Edit: "✏️",
+  MultiEdit: "✂️",
+  Bash: "🐚",
+  Grep: "🔍",
+  Glob: "📁",
+  Agent: "🤖",
+  Task: "🤖",
+  WebFetch: "🌐",
+  WebSearch: "🔎",
+  TodoWrite: "📋",
+  NotebookEdit: "📓",
+  NotebookRead: "📓",
+};
+const DEFAULT_TOOL_EMOJI = "🛠️";
+const MAX_TOOL_DETAIL = 80;
+const MAX_TEXT_PREVIEW = 200;
 
 function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -114,6 +139,7 @@ export class LiveHandle {
   readonly #chatId: number;
   readonly #threadId: number | undefined;
   #messageId: number;
+  /** Pre-escaped HTML; lines separated by `\n` so rollover can split at boundaries. */
   #streamBuffer = "";
   #finalBuffer = "";
   #lastSentText = "";
@@ -137,20 +163,19 @@ export class LiveHandle {
   appendOutput(line: string): void {
     if (this.#closed) return;
     const stripped = stripStreamPrefix(line);
-    const normalized = stripped.endsWith("\n") ? stripped : stripped + "\n";
-    this.#streamBuffer += normalized;
-    this.#scheduleFlush();
+    this.#pushStream(escapeHtml(stripped));
   }
 
   /**
-   * Append a raw NDJSON event. v1: only known `summary` shape is rendered;
-   * unknown shapes drop.
+   * Append a raw NDJSON event from `ai-ide-cli`. Known Claude shapes
+   * (system init, assistant text/tool_use) render as one or more emoji-led
+   * HTML lines; unrecognized shapes drop.
    */
   appendEvent(event: Record<string, unknown>): void {
     if (this.#closed) return;
     const rendered = renderEvent(event);
     if (rendered === null) return;
-    this.appendOutput(rendered);
+    this.#pushStream(rendered);
   }
 
   /** Append the IDE's final result (assistant reply). Rendered as plain
@@ -191,6 +216,12 @@ export class LiveHandle {
     }
   }
 
+  #pushStream(html: string): void {
+    const normalized = html.endsWith("\n") ? html : html + "\n";
+    this.#streamBuffer += normalized;
+    this.#scheduleFlush();
+  }
+
   // FR-EVENT-STREAM: debounce + rollover
   #scheduleFlush(): void {
     if (this.#flushTimer !== undefined) return;
@@ -227,7 +258,7 @@ export class LiveHandle {
   #render(closingMarker = ""): string {
     const parts: string[] = [];
     const s = this.#streamBuffer.replace(/\n+$/, "");
-    if (s.length > 0) parts.push(BQ_OPEN + escapeHtml(s) + BQ_CLOSE);
+    if (s.length > 0) parts.push(BQ_OPEN + s + BQ_CLOSE);
     const f = this.#finalBuffer.replace(/\n+$/, "");
     if (f.length > 0) parts.push(escapeHtml(f));
     return parts.join("\n\n") + closingMarker;
@@ -251,7 +282,7 @@ export class LiveHandle {
     const budget = this.#rolloverAt - TAG_OVERHEAD - ROLLOVER_MARKER.length;
     const maxHead = Math.max(1, budget);
     const { head, tail } = cutAtNewline(this.#streamBuffer, maxHead);
-    const rendered = BQ_OPEN + escapeHtml(head) + ROLLOVER_MARKER + BQ_CLOSE;
+    const rendered = BQ_OPEN + head + ROLLOVER_MARKER + BQ_CLOSE;
     await this.#sender.edit(
       this.#chatId,
       this.#messageId,
@@ -305,10 +336,117 @@ function cutAtNewline(
   return { head: s.slice(0, splitAt), tail: s.slice(splitAt) };
 }
 
-/** Minimal event renderer for v1: only known `ai-ide-cli` summary events. */
+function truncate(s: string, max: number): string {
+  return s.length > max ? s.slice(0, max - 1) + "…" : s;
+}
+
+// Common dev-machine path prefixes (homedir-style or container workspace).
+const PATH_PREFIX_RE =
+  /^(?:\/workspaces\/[^/]+|\/[^/]+\/[^/]+\/[^/]+\/[^/]+\/[^/]+)\//;
+
+function shortenPath(p: string): string {
+  return p.replace(PATH_PREFIX_RE, "");
+}
+
+function code(s: string): string {
+  return `<code>${escapeHtml(truncate(s, MAX_TOOL_DETAIL))}</code>`;
+}
+
+function asString(v: unknown): string | undefined {
+  return typeof v === "string" && v.length > 0 ? v : undefined;
+}
+
+function fmtToolDetail(
+  name: string,
+  input: Record<string, unknown> | undefined,
+): string {
+  if (!input) return "";
+  switch (name) {
+    case "Read":
+    case "Write":
+    case "Edit":
+    case "MultiEdit": {
+      const path = asString(input.file_path);
+      return path ? code(shortenPath(path)) : "";
+    }
+    case "NotebookEdit":
+    case "NotebookRead": {
+      const path = asString(input.notebook_path) ?? asString(input.file_path);
+      return path ? code(shortenPath(path)) : "";
+    }
+    case "Bash": {
+      const desc = asString(input.description);
+      if (desc) return escapeHtml(truncate(desc, MAX_TOOL_DETAIL));
+      const cmd = asString(input.command);
+      return cmd ? code(cmd) : "";
+    }
+    case "Grep": {
+      const pat = asString(input.pattern);
+      const path = asString(input.path);
+      const left = pat ? code(`/${pat}/`) : "";
+      const right = path ? `in ${code(shortenPath(path))}` : "";
+      return [left, right].filter(Boolean).join(" ");
+    }
+    case "Glob": {
+      const pat = asString(input.pattern);
+      return pat ? code(pat) : "";
+    }
+    case "Agent":
+    case "Task": {
+      const desc = asString(input.description) ?? asString(input.subagent_type);
+      return desc ? escapeHtml(truncate(desc, MAX_TOOL_DETAIL)) : "";
+    }
+    case "WebFetch": {
+      const url = asString(input.url);
+      return url ? code(url) : "";
+    }
+    case "WebSearch": {
+      const q = asString(input.query);
+      return q ? code(q) : "";
+    }
+    case "TodoWrite": {
+      const todos = input.todos;
+      return Array.isArray(todos) ? `${todos.length} items` : "";
+    }
+    default:
+      return "";
+  }
+}
+
+/** Render one IDE event as 0+ HTML lines (escaped, may contain `<code>`/`<b>`). */
 function renderEvent(event: Record<string, unknown>): string | null {
-  // Prefer pre-formatted `summary` field when present (future-proof).
-  const summary = event["summary"];
-  if (typeof summary === "string" && summary.length > 0) return summary;
+  const type = event.type;
+  if (type === "system" && event.subtype === "init") {
+    const model = asString(event.model) ?? "?";
+    return `⚙️ <code>${escapeHtml(model)}</code>`;
+  }
+  if (type === "assistant") {
+    const message = event.message as { content?: unknown } | undefined;
+    const contents = message?.content;
+    if (!Array.isArray(contents)) return null;
+    const lines: string[] = [];
+    for (const block of contents as Array<Record<string, unknown>>) {
+      if (
+        block.type === "text" &&
+        typeof block.text === "string" &&
+        block.text.length > 0
+      ) {
+        const collapsed = block.text.replace(/\s+/g, " ").trim();
+        if (collapsed.length === 0) continue;
+        lines.push(`💬 ${escapeHtml(truncate(collapsed, MAX_TEXT_PREVIEW))}`);
+      } else if (block.type === "tool_use") {
+        const name = asString(block.name) ?? "?";
+        const emoji = TOOL_EMOJI[name] ?? DEFAULT_TOOL_EMOJI;
+        const detail = fmtToolDetail(
+          name,
+          block.input as Record<string, unknown> | undefined,
+        );
+        const prefix = `${emoji} <b>${escapeHtml(name)}</b>`;
+        lines.push(detail ? `${prefix} ${detail}` : prefix);
+      }
+    }
+    return lines.length > 0 ? lines.join("\n") : null;
+  }
+  // Result + everything else: finalize() owns the closing UI; no inline render.
   return null;
 }
