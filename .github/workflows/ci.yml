@@ -1,0 +1,105 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Setup Deno
+        uses: denoland/setup-deno@e95548e56dfa95d4e1a28d6f422fafe75c4c26fb # v2.0.3
+        with:
+          deno-version: v2.7.11
+
+      - name: Verify file integrity after setup
+        run: |
+          git diff --exit-code || { echo "::error::Unexpected file modifications after setup"; exit 1; }
+          [ -z "$(git ls-files --others --exclude-standard)" ] || { echo "::error::Unexpected untracked files after setup"; exit 1; }
+
+      - name: Run checks
+        run: deno task check
+
+      - name: Verify file integrity after checks
+        run: |
+          git diff --exit-code || { echo "::error::Unexpected file modifications after checks"; exit 1; }
+          [ -z "$(git ls-files --others --exclude-standard)" ] || { echo "::error::Unexpected untracked files after checks"; exit 1; }
+
+      - name: Verify daemon entrypoint type-checks
+        run: deno check engine/cli.ts
+
+  release:
+    needs: check
+    if: |
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      !contains(github.event.head_commit.message, 'chore(release):')
+    runs-on: ubuntu-latest
+    concurrency:
+      group: release
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Deno
+        uses: denoland/setup-deno@e95548e56dfa95d4e1a28d6f422fafe75c4c26fb # v2.0.3
+        with:
+          deno-version: v2.7.11
+
+      - name: Determine releasable
+        id: releasable
+        run: |
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          if [ -z "$LATEST_TAG" ]; then
+            echo "should_release=true" >> $GITHUB_OUTPUT
+          else
+            COMMITS=$(git log --oneline ${LATEST_TAG}..HEAD --grep="^feat\|^fix\|^perf\|^break\|^refactor\|^build" | wc -l)
+            [ "$COMMITS" -gt 0 ] && echo "should_release=true" >> $GITHUB_OUTPUT || { echo "Nothing to release"; echo "should_release=false" >> $GITHUB_OUTPUT; }
+          fi
+
+      - name: Create release
+        id: create-release
+        if: steps.releasable.outputs.should_release == 'true'
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          deno run -A npm:standard-version
+          NEW_VERSION=$(deno eval "console.log(JSON.parse(Deno.readTextFileSync('engine/deno.json')).version)")
+          NEW_TAG="v${NEW_VERSION}"
+          NOTES_FILE=$(mktemp)
+          deno run -A scripts/generate-release-notes.ts "$LATEST_TAG" "$NEW_TAG" "${{ github.repository }}" > "$NOTES_FILE"
+          git push --follow-tags origin main
+          echo "version=${NEW_VERSION}" >> $GITHUB_OUTPUT
+          echo "notes_file=${NOTES_FILE}" >> $GITHUB_OUTPUT
+
+      - name: Publish to JSR
+        if: steps.releasable.outputs.should_release == 'true'
+        run: deno publish --allow-dirty
+
+      - name: Create GitHub Release
+        if: steps.releasable.outputs.should_release == 'true'
+        uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe # v2.6.1
+        with:
+          tag_name: v${{ steps.create-release.outputs.version }}
+          body_path: ${{ steps.create-release.outputs.notes_file }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

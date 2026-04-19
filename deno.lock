@@ -1,6 +1,7 @@
 {
   "version": "5",
   "specifiers": {
+    "jsr:@korchasa/ai-ide-cli@*": "0.1.18",
     "jsr:@korchasa/ai-ide-cli@~0.1.18": "0.1.18",
     "jsr:@std/assert@^1.0.19": "1.0.19",
     "jsr:@std/fs@1": "1.0.23",

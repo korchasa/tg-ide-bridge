@@ -1,5 +1,11 @@
 {
-  "name": "@tg-ide-bridge/engine",
+  "name": "@korchasa/tg-ide-bridge",
   "version": "0.1.0",
-  "exports": "./cli.ts"
+  "exports": "./cli.ts",
+  "license": "MIT",
+  "publish": {
+    "exclude": [
+      "**/*_test.ts"
+    ]
+  }
 }

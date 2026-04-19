@@ -12,7 +12,8 @@
     "test": "deno test -A",
     "dev": "deno run --watch --env-file=.env -A engine/cli.ts",
     "prod": "deno run --env-file=.env -A engine/cli.ts",
-    "fmt": "deno fmt"
+    "fmt": "deno fmt",
+    "release": "deno run -A npm:standard-version --skip.tag"
   },
   "fmt": {
     "proseWrap": "preserve",

@@ -166,7 +166,7 @@ export class Sender {
    * `^[a-z0-9_]{1,32}$`; descriptions ≤ 256 chars.
    */
   async setMyCommands(
-    commands: Array<{ command: string; description: string }>,
+    commands: ReadonlyArray<{ command: string; description: string }>,
   ): Promise<void> {
     await this.#post("setMyCommands", { commands });
   }
