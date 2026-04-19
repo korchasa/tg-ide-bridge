@@ -72,14 +72,14 @@
 - **Deps:** `SupportedIde` from `engine/config.ts`.
 
 ### 3.8 `engine/tg/streamer.ts`
-- **Purpose:** Render IDE event/output stream into an edit-in-place TG "live" message with rate-limited flush and 4096-char rollover (FR-EVENT-STREAM). Uses Bot API HTML parse mode: stream lines rendered inside `<blockquote expandable>…</blockquote>`, final assistant text rendered below as plain escaped text.
+- **Purpose:** Render IDE event/output stream into an edit-in-place TG "live" message with rate-limited flush and 4096-char rollover (FR-EVENT-STREAM). Uses Bot API HTML parse mode: stream lines rendered inside `<blockquote expandable>…</blockquote>`, final assistant text rendered below via `markdownToTelegramHTML` (native bold/italic/code/headers/links/blockquotes).
 - **Interfaces:**
   - `Streamer.open(chatId: number, threadId?: number): Promise<LiveHandle>`.
   - `LiveHandle.appendEvent(event: Record<string, unknown>): void` — runs the rich event renderer over an `@korchasa/ai-ide-cli` NDJSON event and appends the resulting HTML lines to the stream buffer; unknown event shapes drop silently.
   - `LiveHandle.appendOutput(line: string): void` — appends a raw `onOutput` line to the stream buffer; strips leading `[stream]` and `text:` prefixes and HTML-escapes the remainder. Retained as a fallback channel (not wired by `Dispatcher`).
-  - `LiveHandle.appendFinal(text: string): void` — appends to the final-result buffer (rendered as plain text, outside the blockquote).
+  - `LiveHandle.appendFinal(text: string): void` — appends raw Markdown to the final-result buffer; converted to TG HTML at render time and rendered outside the blockquote.
   - `LiveHandle.finalize(kind: "ok"|"error", trailer?: string): Promise<void>` — forces a final flush; on `error` appends `<b>✗</b> <i>trailer</i>`, on `ok` adds no marker; stops accepting further appends.
-- **Render:** `<blockquote expandable>${streamBuf}</blockquote>` + optional `\n\n${escape(finalBuf)}` + optional terminal marker. `streamBuf` already holds pre-escaped HTML so it is not re-escaped on render. Empty buffers are skipped. Sent with `parse_mode: "HTML"`; only `<`, `>`, `&` are HTML-escaped at append time.
+- **Render:** `<blockquote expandable>${streamBuf}</blockquote>` + optional `\n\n${markdownToTelegramHTML(finalBuf)}` + optional terminal marker. `streamBuf` already holds pre-escaped HTML so it is not re-escaped on render; `finalBuf` stays in raw Markdown until render so rollover cuts on source-newline boundaries. Empty buffers are skipped. Sent with `parse_mode: "HTML"`; only `<`, `>`, `&` are HTML-escaped at append time. `<pre>` intentionally never appears inside `<blockquote>` (TG rejects that nesting) — this is why the converter is applied to `finalBuf` only.
 - **Event renderer:** pure function mapping Claude NDJSON shapes to emoji-prefixed HTML lines:
   - `system/init` → `⚙️ <code>{model}</code>`.
   - `assistant.message.content[*].text` → `💬 {preview}` (collapsed whitespace, truncated to 200 chars).
@@ -87,7 +87,13 @@
   - `detail` is per-tool: file-touching tools render `<code>{shortened path}</code>`; `Bash` prefers `description` (plain) over `<code>{command}</code>`; `Grep` shows `<code>/{pattern}/</code>` and optional `in <code>{path}</code>`; `Glob`, `WebFetch`, `WebSearch` show their primary arg in `<code>`; `Agent`/`Task` show `description`; `TodoWrite` shows `{N} items`. Long values are truncated to 80 chars.
   - All other event shapes (incl. `result`) drop — `finalize()` owns the closing UI and `appendFinal` carries the assistant reply.
 - **Edit dedupe:** skip `editMessageText` when rendered body equals the last successfully sent body (guards against TG's `message is not modified` error).
-- **Deps:** `Sender` (`send`, `edit` with `parseMode: "HTML"`), `setTimeout` (debounce), event renderer.
+- **Deps:** `Sender` (`send`, `edit` with `parseMode: "HTML"`), `setTimeout` (debounce), event renderer, `engine/tg/format.ts` (`escapeHtml`, `markdownToTelegramHTML`).
+
+### 3.10 `engine/tg/format.ts`
+- **Purpose:** Pure Markdown → Telegram HTML converter (FR-EVENT-STREAM). Targets TG's `parse_mode: "HTML"` rule set: minimal 3-char escape (`<`/`>`/`&`), `#..######` → `<b>`, `**bold**` → `<b>`, `*x*`/`_x_` → `<i>`, `` `x` `` → `<code>`, fenced blocks → `<pre><code class="language-…">`, `[t](u)` → `<a>`, `> q` → `<blockquote>`. Fenced blocks and `> `-blocks are protected via NUL-byte placeholders so inline passes leave their contents intact; remaining plain text is escaped so stray `<`/`>`/`&` cannot confuse the TG parser.
+- **Interfaces:** `escapeHtml(text: string): string`; `markdownToTelegramHTML(input: string|null|undefined): string`.
+- **Deps:** none.
+- **Known limitations:** `***x***` → `<i>&lt;b&gt;x&lt;/b&gt;</i>` (nested bold inside italic gets re-escaped); Markdown inside `#` headers is escaped, not nested; fenced blocks cut across a rollover boundary degrade to plain text on the boundary — acceptable (data preserved, styling only).
 
 ## 4. Data
 - **Entities:**

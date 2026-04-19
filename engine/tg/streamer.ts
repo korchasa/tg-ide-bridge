@@ -9,15 +9,18 @@
  *
  * Rendering uses Bot API `parse_mode: "HTML"`. Stream events go inside a
  * `<blockquote expandable>…</blockquote>` (collapsible in TG clients); the
- * final assistant result is appended underneath as plain escaped text.
+ * final assistant result is rendered below via `markdownToTelegramHTML`
+ * (headers/bold/italic/code/links/blockquotes → native TG HTML).
  *
  * The stream buffer holds pre-escaped HTML (each line is a complete chunk);
  * `appendOutput` escapes raw text on the way in, while `appendEvent` runs the
  * rich renderer that emits emoji + `<code>`-wrapped arguments for known IDE
- * tools.
+ * tools. The final buffer stays in raw Markdown until render time so that
+ * rollover can still cut on source-text newline boundaries.
  */
 
 import type { Sender } from "./sender.ts";
+import { escapeHtml, markdownToTelegramHTML } from "./format.ts";
 
 /** Injectable clock so tests can advance time deterministically. */
 export interface StreamerClock {
@@ -75,10 +78,6 @@ const TOOL_EMOJI: Record<string, string> = {
 const DEFAULT_TOOL_EMOJI = "🛠️";
 const MAX_TOOL_DETAIL = 80;
 const MAX_TEXT_PREVIEW = 200;
-
-function escapeHtml(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
 
 function stripStreamPrefix(line: string): string {
   return line.replace(STREAM_PREFIX_RE, "").replace(TEXT_PREFIX_RE, "");
@@ -260,7 +259,7 @@ export class LiveHandle {
     const s = this.#streamBuffer.replace(/\n+$/, "");
     if (s.length > 0) parts.push(BQ_OPEN + s + BQ_CLOSE);
     const f = this.#finalBuffer.replace(/\n+$/, "");
-    if (f.length > 0) parts.push(escapeHtml(f));
+    if (f.length > 0) parts.push(markdownToTelegramHTML(f));
     return parts.join("\n\n") + closingMarker;
   }
 
@@ -303,10 +302,20 @@ export class LiveHandle {
 
   // FR-EVENT-STREAM: rollover (final half)
   async #rolloverFinal(): Promise<void> {
-    const budget = this.#rolloverAt - ROLLOVER_MARKER.length;
-    const maxHead = Math.max(1, budget);
-    const { head, tail } = cutAtNewline(this.#finalBuffer, maxHead);
-    const rendered = escapeHtml(head) + ROLLOVER_MARKER;
+    // Markdown→HTML can inflate the source by a variable factor (e.g. `code`
+    // → <code>code</code>). Shrink the source cut iteratively until the
+    // rendered body with rollover marker fits the per-message budget.
+    let maxHead = Math.max(1, this.#rolloverAt - ROLLOVER_MARKER.length);
+    let cut = cutAtNewline(this.#finalBuffer, maxHead);
+    let rendered = markdownToTelegramHTML(cut.head) + ROLLOVER_MARKER;
+    while (rendered.length > this.#rolloverAt && cut.head.length > 1) {
+      const ratio = this.#rolloverAt / rendered.length;
+      const next = Math.max(1, Math.floor(maxHead * ratio) - 1);
+      maxHead = next < maxHead ? next : maxHead - 1;
+      cut = cutAtNewline(this.#finalBuffer, maxHead);
+      rendered = markdownToTelegramHTML(cut.head) + ROLLOVER_MARKER;
+    }
+    const tail = cut.tail;
     await this.#sender.edit(
       this.#chatId,
       this.#messageId,

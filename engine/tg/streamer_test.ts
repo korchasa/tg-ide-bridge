@@ -530,3 +530,109 @@ Deno.test("LiveHandle.appendFinal renders final text outside the blockquote", as
     "final text leaked into blockquote",
   );
 });
+
+Deno.test("LiveHandle.appendFinal renders Markdown as native TG HTML", async () => {
+  const { sender, calls } = mockSender();
+  const clock = new ManualClock();
+  const streamer = new Streamer({ sender, clock });
+  const live = await streamer.open(42);
+  live.appendFinal(
+    "# Report\n**Approve** — tests green. Call `ok` and [see](https://x.test).\n\n> note",
+  );
+  await live.finalize("ok");
+  const text = String(
+    calls.filter((c) => c.method === "editMessageText").at(-1)!.body.text,
+  );
+  assertStringIncludes(text, "<b>Report</b>");
+  assertStringIncludes(text, "<b>Approve</b>");
+  assertStringIncludes(text, "<code>ok</code>");
+  assertStringIncludes(text, '<a href="https://x.test">see</a>');
+  assertStringIncludes(text, "<blockquote>note</blockquote>");
+  assert(!text.includes("# Report"), `raw header leaked: ${text}`);
+  assert(!text.includes("**Approve**"), `raw bold leaked: ${text}`);
+});
+
+Deno.test("LiveHandle.appendFinal Markdown does not leak into stream blockquote", async () => {
+  const { sender, calls } = mockSender();
+  const clock = new ManualClock();
+  const streamer = new Streamer({ sender, clock });
+  const live = await streamer.open(42);
+  live.appendOutput("tool: Read engine/cli.ts");
+  live.appendFinal("## Verdict\n**Approve**\n```ts\nconsole.log(1);\n```");
+  await live.finalize("ok");
+  const text = String(
+    calls.filter((c) => c.method === "editMessageText").at(-1)!.body.text,
+  );
+  const closeIdx = text.indexOf("</blockquote>");
+  assert(closeIdx > 0, "blockquote present");
+  const bqBody = text.slice(
+    text.indexOf("<blockquote expandable>"),
+    closeIdx,
+  );
+  assert(
+    !bqBody.includes("<b>Verdict</b>"),
+    `final <b> tag leaked into stream blockquote: ${bqBody}`,
+  );
+  assert(
+    !bqBody.includes("<pre>"),
+    `final <pre> leaked into stream blockquote (illegal nesting): ${bqBody}`,
+  );
+});
+
+Deno.test("LiveHandle finalize splits huge Markdown final buffer without exceeding rolloverAt", async () => {
+  const { sender, calls } = mockSender();
+  const clock = new ManualClock();
+  const rolloverAt = 200;
+  const streamer = new Streamer({ sender, clock, rolloverAt });
+  const live = await streamer.open(42);
+  // Mix of paragraphs and a fenced block, total far bigger than rolloverAt.
+  const para = "Paragraph with **bold** and `inline`.\n";
+  const big = para.repeat(20) +
+    "```ts\n" + "console.log(1);\n".repeat(10) + "```\n" + para.repeat(20);
+  live.appendFinal(big);
+  await live.finalize("ok");
+  for (const c of calls) {
+    const len = String(c.body.text ?? "").length;
+    assert(len <= rolloverAt, `text must fit rolloverAt; got ${len}`);
+  }
+  const joined = calls
+    .filter((c) => c.method === "editMessageText" || c.method === "sendMessage")
+    .map((c) => String(c.body.text ?? ""))
+    .join("");
+  assertStringIncludes(joined, "<b>bold</b>");
+  assertStringIncludes(joined, "<code>inline</code>");
+});
+
+Deno.test("LiveHandle empty final buffer keeps plain stream render (no stray tags)", async () => {
+  const { sender, calls } = mockSender();
+  const clock = new ManualClock();
+  const streamer = new Streamer({ sender, clock });
+  const live = await streamer.open(42);
+  live.appendOutput("progress only");
+  await live.finalize("ok");
+  const text = String(
+    calls.filter((c) => c.method === "editMessageText").at(-1)!.body.text,
+  );
+  assertStringIncludes(text, "<blockquote expandable>");
+  assertStringIncludes(text, "progress only");
+  assert(
+    !text.includes("<b></b>"),
+    `empty bold leaked: ${text}`,
+  );
+});
+
+Deno.test("LiveHandle finalize(error) HTML-escapes < in trailer", async () => {
+  const { sender, calls } = mockSender();
+  const clock = new ManualClock();
+  const streamer = new Streamer({ sender, clock });
+  const live = await streamer.open(42);
+  await live.finalize("error", "<boom>");
+  const edits = calls.filter((c) => c.method === "editMessageText");
+  const text = String(edits.at(-1)!.body.text);
+  assertStringIncludes(text, "✗");
+  assertStringIncludes(text, "<i>&lt;boom&gt;</i>");
+  assert(
+    !text.includes("<boom>"),
+    `raw < in trailer must not leak: ${text}`,
+  );
+});

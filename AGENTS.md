@@ -74,6 +74,7 @@ Maps source code paths to documentation sections that describe them. Used by com
 - `engine/tg/poller.ts` → SDS §3.3; SRS FR-TG-POLL.
 - `engine/tg/sender.ts` → SDS §3.4; SRS FR-RESPONSE-STREAM.
 - `engine/tg/streamer.ts` → SDS §3.8; SRS FR-EVENT-STREAM.
+- `engine/tg/format.ts` → SDS §3.10; SRS FR-EVENT-STREAM.
 - `engine/session.ts` → SDS §3.6; SRS FR-SESSION-RESUME, FR-SETTINGS.
 - `engine/dispatcher.ts` → SDS §3.7; SRS FR-CMD-EXEC, FR-SESSION-RESUME, FR-EVENT-STREAM, FR-SETTINGS.
 - `engine/settings.ts` → SDS §3.9; SRS FR-SETTINGS.
