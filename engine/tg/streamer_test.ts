@@ -164,9 +164,8 @@ Deno.test("LiveHandle splits a huge final result across multiple messages withou
     const len = String(c.body.text ?? "").length;
     assert(len <= rolloverAt, `text must fit limit; got ${len}`);
   }
-  const edits = calls.filter((c) => c.method === "editMessageText");
-  const last = String(edits.at(-1)!.body.text);
-  assertStringIncludes(last, "✓");
+  const sends = calls.filter((c) => c.method === "sendMessage");
+  assert(sends.length > 1, "rolled over into multiple messages");
 });
 
 Deno.test("LiveHandle.finalize(error) splits huge error output across messages", async () => {
@@ -187,7 +186,7 @@ Deno.test("LiveHandle.finalize(error) splits huge error output across messages",
   assertStringIncludes(last, "boom");
 });
 
-Deno.test("LiveHandle.finalize(ok) flushes and appends success marker", async () => {
+Deno.test("LiveHandle.finalize(ok) flushes content without a trailing success marker", async () => {
   const { sender, calls } = mockSender();
   const clock = new ManualClock();
   const streamer = new Streamer({ sender, clock });
@@ -199,7 +198,7 @@ Deno.test("LiveHandle.finalize(ok) flushes and appends success marker", async ()
   const last = edits.at(-1)!;
   const text = String(last.body.text);
   assertStringIncludes(text, "done");
-  assertStringIncludes(text, "✓");
+  assert(!text.includes("✓"), `OK marker must not appear: ${text}`);
 });
 
 Deno.test("LiveHandle.finalize(error) appends error trailer", async () => {
@@ -244,7 +243,6 @@ Deno.test("LiveHandle flushes pending buffer during finalize", async () => {
   assert(edits.length >= 1);
   const text = String(edits.at(-1)!.body.text);
   assertStringIncludes(text, "pending content");
-  assertStringIncludes(text, "✓");
 });
 
 Deno.test("Streamer sends every API call with parse_mode: HTML", async () => {
@@ -264,7 +262,7 @@ Deno.test("Streamer sends every API call with parse_mode: HTML", async () => {
   }
 });
 
-Deno.test("LiveHandle strips [stream] prefix from onOutput lines", async () => {
+Deno.test("LiveHandle strips [stream] and text: prefixes from onOutput lines", async () => {
   const { sender, calls } = mockSender();
   const clock = new ManualClock();
   const streamer = new Streamer({ sender, clock });
@@ -274,9 +272,10 @@ Deno.test("LiveHandle strips [stream] prefix from onOutput lines", async () => {
   await live.finalize("ok");
   const edits = calls.filter((c) => c.method === "editMessageText");
   const text = String(edits.at(-1)!.body.text);
-  assert(!text.includes("[stream]"), `prefix leaked: ${text}`);
+  assert(!text.includes("[stream]"), `[stream] prefix leaked: ${text}`);
+  assert(!text.includes("text:"), `text: prefix leaked: ${text}`);
   assertStringIncludes(text, "tool: Read engine/cli.ts");
-  assertStringIncludes(text, "text: hi");
+  assertStringIncludes(text, "hi");
 });
 
 Deno.test("LiveHandle wraps stream buffer inside <blockquote expandable>", async () => {

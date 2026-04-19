@@ -76,9 +76,9 @@
 - **Interfaces:**
   - `Streamer.open(chatId: number, threadId?: number): Promise<LiveHandle>`.
   - `LiveHandle.appendEvent(event: Record<string, unknown>): void` — formats a raw `@korchasa/ai-ide-cli` NDJSON event and appends to the stream buffer.
-  - `LiveHandle.appendOutput(line: string): void` — appends a raw `onOutput` line to the stream buffer; strips leading `[stream]` prefix emitted by upstream.
+  - `LiveHandle.appendOutput(line: string): void` — appends a raw `onOutput` line to the stream buffer; strips leading `[stream]` and `text:` prefixes emitted by upstream.
   - `LiveHandle.appendFinal(text: string): void` — appends to the final-result buffer (rendered as plain text, outside the blockquote).
-  - `LiveHandle.finalize(kind: "ok"|"error", trailer?: string): Promise<void>` — forces a final flush, appends terminal marker (`<b>✓</b>` / `<b>✗</b> <i>trailer</i>`), stops accepting further appends.
+  - `LiveHandle.finalize(kind: "ok"|"error", trailer?: string): Promise<void>` — forces a final flush; on `error` appends `<b>✗</b> <i>trailer</i>`, on `ok` adds no marker; stops accepting further appends.
 - **Render:** `<blockquote expandable>${escape(streamBuf)}</blockquote>` + optional `\n\n${escape(finalBuf)}` + optional terminal marker. Empty buffers are skipped. Sent with `parse_mode: "HTML"`; only `<`, `>`, `&` are HTML-escaped.
 - **Event renderer:** small pure function mapping NDJSON event kinds (`tool_use`, `tool_result`, `thinking`, `partial_text`, `init`, `usage`) to short human-readable lines; unknown kinds are dropped.
 - **Edit dedupe:** skip `editMessageText` when rendered body equals the last successfully sent body (guards against TG's `message is not modified` error).

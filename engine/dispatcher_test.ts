@@ -442,7 +442,7 @@ Deno.test("Dispatcher streams onOutput lines through Streamer to TG edits", asyn
   const finalText = edits.at(-1)!.body.text as string;
   assertStringIncludes(finalText, "tool: Read engine/cli.ts");
   assertStringIncludes(finalText, "final answer");
-  assertStringIncludes(finalText, "✓");
+  assert(!finalText.includes("✓"), `OK marker must not appear: ${finalText}`);
 });
 
 Deno.test("Dispatcher finalizes live message with ✗ on IDE error", async () => {

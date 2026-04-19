@@ -47,16 +47,16 @@ const BQ_OPEN = "<blockquote expandable>";
 const BQ_CLOSE = "</blockquote>";
 const TAG_OVERHEAD = BQ_OPEN.length + BQ_CLOSE.length;
 const ROLLOVER_MARKER = "\n…";
-const OK_MARKER = "\n\n<b>✓</b>";
 const ERR_PREFIX = "\n\n<b>✗</b> ";
 const STREAM_PREFIX_RE = /^\[stream\](?:\s+|$)/;
+const TEXT_PREFIX_RE = /^text:\s*/;
 
 function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
 function stripStreamPrefix(line: string): string {
-  return line.replace(STREAM_PREFIX_RE, "");
+  return line.replace(STREAM_PREFIX_RE, "").replace(TEXT_PREFIX_RE, "");
 }
 
 export class Streamer {
@@ -172,13 +172,14 @@ export class LiveHandle {
     }
     await this.#flushing.catch(() => {});
     const marker = kind === "ok"
-      ? OK_MARKER
+      ? ""
       : ERR_PREFIX + "<i>" + escapeHtml(trailer ?? "error") + "</i>";
     // Roll over until the body (with closing marker) fits one TG message.
     while (this.#render(marker).length > this.#rolloverAt) {
       if (!(await this.#rolloverOnce())) break;
     }
     const rendered = this.#render(marker);
+    if (rendered.length === 0) return;
     if (rendered !== this.#lastSentText) {
       await this.#sender.edit(
         this.#chatId,
