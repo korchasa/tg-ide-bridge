@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [0.1.2](https://github.com/korchasa/tg-ide-bridge/compare/v0.1.1...v0.1.2) (2026-04-19)
+
+
+### Build System
+
+* **ci:** bump action and Deno versions to latest ([9d081da](https://github.com/korchasa/tg-ide-bridge/commit/9d081da1560fde75d3a4b7ff1918e171cd761cf6))
+
 ### 0.1.1 (2026-04-19)
 
 
