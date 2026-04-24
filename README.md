@@ -129,8 +129,45 @@ next write uses the new shape.
 ## Development
 
 - `deno task dev` — watch mode (auto-loads `.env`).
-- `deno task check` — fmt + lint + comment-scan + tests.
-- `deno task test` — tests only.
+- `deno task check` — fmt + lint + comment-scan + tests (excludes e2e).
+- `deno task test` — unit/integration tests only.
+- `deno task e2e` — real-IDE end-to-end tests; see below.
+
+## Running e2e tests
+
+`deno task e2e` drives every supported IDE's actual CLI binary through the
+production `SessionManager` + `Streamer`. Telegram stays faked (an
+in-memory `fetch` stub); only the IDE side is real.
+
+Tests live in `e2e/` and are isolated from `deno task test` / `deno task
+check` so the default gate remains hermetic and free.
+
+Requirements for each IDE you want covered:
+
+- `claude` — `claude` binary on PATH, logged in (`claude login`) or
+  `ANTHROPIC_API_KEY` set.
+- `opencode` — `opencode` binary on PATH, authenticated per opencode's
+  own instructions.
+- `cursor` — `cursor` CLI on PATH, logged in.
+- `codex` — `codex` binary on PATH, authenticated.
+
+Skip semantics:
+
+- Missing binary → tests for that IDE skip with reason
+  `binary '<bin>' not found on PATH` (Deno reports them as `ignored`).
+- Adapter factory throws → skipped with `adapter error: <msg>`.
+- Missing auth → skipped with a CLI-specific reason:
+  `claude auth status`, `codex login status`, `cursor agent status`,
+  `opencode providers list`.
+- Real runtime/auth regressions after a successful status probe still fail
+  the test normally.
+
+Running the task on a box with zero IDEs configured exits `0` with every
+test marked `ignored`.
+
+Cost: a full 4-IDE run makes up to ~20 real model calls using short
+prompts ("Reply with OK", "just A", "just B", plus the `/stop` long-turn
+prompt). Per-IDE: 3 tests × ~2 turns average.
 
 ## Limits (v1)
 

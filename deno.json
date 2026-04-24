@@ -9,7 +9,8 @@
   },
   "tasks": {
     "check": "deno run -A scripts/check.ts",
-    "test": "deno test -A",
+    "test": "deno test -A --ignore=e2e/",
+    "e2e": "deno test -A e2e/",
     "dev": "deno run --watch --env-file=.env -A engine/cli.ts",
     "prod": "deno run --env-file=.env -A engine/cli.ts",
     "fmt": "deno fmt",

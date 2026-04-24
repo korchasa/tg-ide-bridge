@@ -147,7 +147,16 @@ const checks: Check[] = [
   { name: "typecheck", run: typecheck },
   {
     name: "test",
-    run: () => runCmd("test", ["deno", "test", "-A", "--permit-no-files"]),
+    // Excludes `e2e/` — the real-IDE suite requires IDE binaries + auth
+    // and makes paid network calls. Run via `deno task e2e` instead.
+    run: () =>
+      runCmd("test", [
+        "deno",
+        "test",
+        "-A",
+        "--permit-no-files",
+        "--ignore=e2e/",
+      ]),
   },
 ];
 
