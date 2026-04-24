@@ -95,6 +95,9 @@ class FakeAdapter implements RuntimeAdapter {
     hitl: false,
     transcript: false,
     interactive: true,
+    toolUseObservation: false,
+    session: false,
+    capabilityInventory: false,
   };
   calls: RuntimeInvokeOptions[] = [];
   result: RuntimeInvokeResult = { output: okOutput() };
@@ -153,7 +156,7 @@ Deno.test("Dispatcher invokes IDE with default effective settings", async () => 
     const sender = new Sender("t", { fetchFn });
     const ide = new FakeAdapter();
     ide.result = { output: okOutput({ result: "pong", session_id: "s" }) };
-    const session = new SessionStore(dir);
+    const session = new SessionStore(dir, "claude");
     const d = new Dispatcher({
       cfg: cfg({ project_dir: dir }),
       sender,
@@ -182,7 +185,7 @@ Deno.test("Dispatcher applies stored settings to IDE invocation", async () => {
     const { fetchFn } = fakeFetch();
     const sender = new Sender("t", { fetchFn });
     const ide = new FakeAdapter();
-    const session = new SessionStore(dir);
+    const session = new SessionStore(dir, "claude");
     await session.saveSettings({
       model: "opus",
       effort: "high",
@@ -205,7 +208,7 @@ Deno.test("Dispatcher applies stored settings to IDE invocation", async () => {
     assertEquals(call.timeoutSeconds, 42);
     assertEquals(call.maxRetries, 3);
     assertEquals(call.retryDelaySeconds, 5);
-    assertEquals(call.extraArgs, ["--effort", "high"]);
+    assertEquals(call.extraArgs, { "--effort": "high" });
   });
 });
 
@@ -214,7 +217,7 @@ Deno.test("Dispatcher omits --effort for non-claude ides", async () => {
     const { fetchFn } = fakeFetch();
     const sender = new Sender("t", { fetchFn });
     const ide = new FakeAdapter();
-    const session = new SessionStore(dir);
+    const session = new SessionStore(dir, "claude");
     await session.saveSettings({ effort: "high" });
     const d = new Dispatcher({
       cfg: cfg({ ide: "opencode", project_dir: dir }),
@@ -296,7 +299,7 @@ Deno.test("Dispatcher persists session token and resumes on next call", async ()
     const { fetchFn } = fakeFetch();
     const sender = new Sender("t", { fetchFn });
     const ide = new FakeAdapter();
-    const session = new SessionStore(dir);
+    const session = new SessionStore(dir, "claude");
     const d = new Dispatcher({
       cfg: cfg({ project_dir: dir }),
       sender,
@@ -326,7 +329,7 @@ Deno.test("Dispatcher /reset clears session and next call omits resume", async (
     const { fetchFn } = fakeFetch();
     const sender = new Sender("t", { fetchFn });
     const ide = new FakeAdapter();
-    const session = new SessionStore(dir);
+    const session = new SessionStore(dir, "claude");
     await session.saveSession("prev-token");
 
     const d = new Dispatcher({
@@ -354,7 +357,7 @@ Deno.test("Dispatcher keeps prior token when IDE returns empty session_id", asyn
     const { fetchFn } = fakeFetch();
     const sender = new Sender("t", { fetchFn });
     const ide = new FakeAdapter();
-    const session = new SessionStore(dir);
+    const session = new SessionStore(dir, "claude");
     await session.saveSession("kept-token");
 
     const d = new Dispatcher({
@@ -451,12 +454,18 @@ Deno.test("Dispatcher streams onEvent through Streamer to TG edits", async () =>
   assertEquals(sends.length, 1, "single live message opened");
   assert(edits.length >= 1, "at least one edit with streamed content");
   const finalText = edits.at(-1)!.body.text as string;
-  assertStringIncludes(finalText, "📖");
+  assertStringIncludes(finalText, "🛠️");
   assertStringIncludes(finalText, "<b>Read</b>");
   assertStringIncludes(finalText, "<code>engine/cli.ts</code>");
-  assertStringIncludes(finalText, "💬");
-  assertStringIncludes(finalText, "hello");
   assertStringIncludes(finalText, "final answer");
+  assert(
+    !finalText.includes("💬"),
+    `text-block preview must not render: ${finalText}`,
+  );
+  assert(
+    !finalText.includes("hello"),
+    `assistant text block content leaked into stream: ${finalText}`,
+  );
   assert(!finalText.includes("✓"), `OK marker must not appear: ${finalText}`);
 });
 
@@ -497,7 +506,7 @@ Deno.test("Dispatcher /settings prints effective settings", async () => {
   await withTempDir(async (dir) => {
     const { fetchFn, calls } = fakeFetch();
     const sender = new Sender("t", { fetchFn });
-    const session = new SessionStore(dir);
+    const session = new SessionStore(dir, "claude");
     await session.saveSettings({ model: "opus" });
     const d = new Dispatcher({
       cfg: cfg({ project_dir: dir }),
@@ -517,7 +526,7 @@ Deno.test("Dispatcher /model opus stores setting", async () => {
   await withTempDir(async (dir) => {
     const { fetchFn } = fakeFetch();
     const sender = new Sender("t", { fetchFn });
-    const session = new SessionStore(dir);
+    const session = new SessionStore(dir, "claude");
     const d = new Dispatcher({
       cfg: cfg({ project_dir: dir }),
       sender,
@@ -533,7 +542,7 @@ Deno.test("Dispatcher /model with invalid value rejects and preserves state", as
   await withTempDir(async (dir) => {
     const { fetchFn, calls } = fakeFetch();
     const sender = new Sender("t", { fetchFn });
-    const session = new SessionStore(dir);
+    const session = new SessionStore(dir, "claude");
     await session.saveSettings({ model: "opus" });
     const d = new Dispatcher({
       cfg: cfg({ project_dir: dir }),
@@ -552,7 +561,7 @@ Deno.test("Dispatcher /model clear unsets the field", async () => {
   await withTempDir(async (dir) => {
     const { fetchFn } = fakeFetch();
     const sender = new Sender("t", { fetchFn });
-    const session = new SessionStore(dir);
+    const session = new SessionStore(dir, "claude");
     await session.saveSettings({ model: "opus" });
     const d = new Dispatcher({
       cfg: cfg({ project_dir: dir }),
@@ -569,7 +578,7 @@ Deno.test("Dispatcher /model without arg shows current + whitelist", async () =>
   await withTempDir(async (dir) => {
     const { fetchFn, calls } = fakeFetch();
     const sender = new Sender("t", { fetchFn });
-    const session = new SessionStore(dir);
+    const session = new SessionStore(dir, "claude");
     await session.saveSettings({ model: "opus" });
     const d = new Dispatcher({
       cfg: cfg({ project_dir: dir }),
@@ -589,7 +598,7 @@ Deno.test("Dispatcher /effort on opencode reports not supported", async () => {
   await withTempDir(async (dir) => {
     const { fetchFn, calls } = fakeFetch();
     const sender = new Sender("t", { fetchFn });
-    const session = new SessionStore(dir);
+    const session = new SessionStore(dir, "claude");
     const d = new Dispatcher({
       cfg: cfg({ ide: "opencode", project_dir: dir }),
       sender,
@@ -607,7 +616,7 @@ Deno.test("Dispatcher /timeout 42 stores numeric setting", async () => {
   await withTempDir(async (dir) => {
     const { fetchFn } = fakeFetch();
     const sender = new Sender("t", { fetchFn });
-    const session = new SessionStore(dir);
+    const session = new SessionStore(dir, "claude");
     const d = new Dispatcher({
       cfg: cfg({ project_dir: dir }),
       sender,
@@ -623,7 +632,7 @@ Deno.test("Dispatcher /timeout 0 is rejected with clear error", async () => {
   await withTempDir(async (dir) => {
     const { fetchFn, calls } = fakeFetch();
     const sender = new Sender("t", { fetchFn });
-    const session = new SessionStore(dir);
+    const session = new SessionStore(dir, "claude");
     const d = new Dispatcher({
       cfg: cfg({ project_dir: dir }),
       sender,
@@ -641,7 +650,7 @@ Deno.test("Dispatcher /retries clear resets to default", async () => {
   await withTempDir(async (dir) => {
     const { fetchFn } = fakeFetch();
     const sender = new Sender("t", { fetchFn });
-    const session = new SessionStore(dir);
+    const session = new SessionStore(dir, "claude");
     await session.saveSettings({ maxRetries: 5 });
     const d = new Dispatcher({
       cfg: cfg({ project_dir: dir }),
@@ -658,7 +667,7 @@ Deno.test("Dispatcher /retry_delay alias sets retryDelaySeconds", async () => {
   await withTempDir(async (dir) => {
     const { fetchFn } = fakeFetch();
     const sender = new Sender("t", { fetchFn });
-    const session = new SessionStore(dir);
+    const session = new SessionStore(dir, "claude");
     const d = new Dispatcher({
       cfg: cfg({ project_dir: dir }),
       sender,
@@ -675,7 +684,7 @@ Deno.test("Dispatcher command changes take effect on next IDE call", async () =>
     const { fetchFn } = fakeFetch();
     const sender = new Sender("t", { fetchFn });
     const ide = new FakeAdapter();
-    const session = new SessionStore(dir);
+    const session = new SessionStore(dir, "claude");
     const d = new Dispatcher({
       cfg: cfg({ project_dir: dir }),
       sender,
@@ -692,42 +701,29 @@ Deno.test("Dispatcher command changes take effect on next IDE call", async () =>
 Deno.test("Dispatcher /stop replies 'no active IDE call' when idle", async () => {
   const { fetchFn, calls } = fakeFetch();
   const sender = new Sender("t", { fetchFn });
-  let killed = 0;
-  const d = new Dispatcher({
-    cfg: cfg(),
-    sender,
-    log: silentLog(),
-    killRunning: () => {
-      killed++;
-    },
-  });
+  const d = new Dispatcher({ cfg: cfg(), sender, log: silentLog() });
   await d.handle(msg("/stop"));
-  assertEquals(killed, 1);
   assertEquals(calls.at(-1)!.body.text, "no active IDE call");
 });
 
-Deno.test("Dispatcher /stop bypasses queue and kills running invocation", async () => {
+Deno.test("Dispatcher /stop bypasses queue and aborts running invocation via AbortSignal", async () => {
   const { fetchFn, calls } = fakeFetch();
   const sender = new Sender("t", { fetchFn });
   const ide = new FakeAdapter();
-  let killRequested = false;
-  const unblock = Promise.withResolvers<void>();
-  ide.invoke = async (opts: RuntimeInvokeOptions) => {
-    // Simulate a long-running IDE call that exits only when killed.
-    await unblock.promise;
-    return {
-      output: okOutput({ result: opts.taskPrompt, session_id: "s" }),
-    };
+  let receivedSignal: AbortSignal | undefined;
+  ide.invoke = (opts: RuntimeInvokeOptions) => {
+    receivedSignal = opts.signal;
+    return new Promise((resolve) => {
+      opts.signal?.addEventListener("abort", () => {
+        resolve({ error: "aborted" });
+      });
+    });
   };
   const d = new Dispatcher({
     cfg: cfg(),
     sender,
     ide,
     log: silentLog(),
-    killRunning: () => {
-      killRequested = true;
-      unblock.resolve();
-    },
   });
   // Start a long call (do not await yet).
   const running = d.handle(msg("long prompt"));
@@ -735,12 +731,12 @@ Deno.test("Dispatcher /stop bypasses queue and kills running invocation", async 
   await new Promise((r) => setTimeout(r, 10));
   // /stop should execute immediately, not wait for the running call.
   await d.handle(msg("/stop"));
-  assert(killRequested, "expected killRunning to be invoked");
+  assert(receivedSignal !== undefined, "expected AbortSignal on invoke opts");
+  assert(receivedSignal!.aborted, "expected signal to be aborted");
   const stopReply = calls.find((c) =>
     c.method === "sendMessage" && c.body.text === "IDE call stopped"
   );
   assert(stopReply, "expected 'IDE call stopped' reply");
-  // The running invoke resolves because kill triggered unblock.
   await running;
 });
 
@@ -749,7 +745,7 @@ Deno.test("Dispatcher does not invoke IDE for recognized commands", async () => 
     const { fetchFn } = fakeFetch();
     const sender = new Sender("t", { fetchFn });
     const ide = new FakeAdapter();
-    const session = new SessionStore(dir);
+    const session = new SessionStore(dir, "claude");
     const d = new Dispatcher({
       cfg: cfg({ project_dir: dir }),
       sender,

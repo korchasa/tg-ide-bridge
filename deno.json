@@ -5,7 +5,7 @@
     "@std/path": "jsr:@std/path@^1.1.4",
     "@std/semver": "jsr:@std/semver@^1.0.0",
     "@std/fs": "jsr:@std/fs@^1.0.0",
-    "@korchasa/ai-ide-cli": "jsr:@korchasa/ai-ide-cli@^0.1.18"
+    "@korchasa/ai-ide-cli": "jsr:@korchasa/ai-ide-cli@^0.5.3"
   },
   "tasks": {
     "check": "deno run -A scripts/check.ts",

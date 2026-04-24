@@ -15,7 +15,8 @@ import { Sender } from "./tg/sender.ts";
 import { Streamer } from "./tg/streamer.ts";
 import { Dispatcher } from "./dispatcher.ts";
 import { SessionStore } from "./session.ts";
-import { getRuntimeAdapter, killAll } from "@korchasa/ai-ide-cli";
+import { getRuntimeAdapter } from "@korchasa/ai-ide-cli";
+import { SessionManager } from "./ide_session.ts";
 import { createLogger, sanitizeError } from "./log.ts";
 
 const BOT_COMMANDS: ReadonlyArray<{ command: string; description: string }> = [
@@ -51,15 +52,24 @@ export async function main(_args: string[]): Promise<number> {
     onError: (err) => log.warn("poller error", { err }),
   });
   const ide = getRuntimeAdapter(cfg.ide);
-  const session = new SessionStore(cfg.project_dir);
+  const session = new SessionStore(cfg.project_dir, cfg.ide);
+  const sessionManager = ide.capabilities.session && ide.openSession
+    ? new SessionManager({
+      ide,
+      ideId: cfg.ide,
+      cwd: cfg.project_dir,
+      store: session,
+      log,
+    })
+    : undefined;
   const dispatcher = new Dispatcher({
     cfg,
     sender,
     ide,
     session,
     streamer,
+    sessionManager,
     log,
-    killRunning: killAll,
   });
 
   try {
@@ -101,6 +111,9 @@ export async function main(_args: string[]): Promise<number> {
   } finally {
     Deno.removeSignalListener("SIGINT", onSignal);
     Deno.removeSignalListener("SIGTERM", onSignal);
+    await dispatcher.close().catch((err) => {
+      log.warn("dispatcher close failed", { err: sanitizeError(err) });
+    });
   }
   return 0;
 }

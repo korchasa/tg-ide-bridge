@@ -13,14 +13,19 @@
  * (headers/bold/italic/code/links/blockquotes → native TG HTML).
  *
  * The stream buffer holds pre-escaped HTML (each line is a complete chunk);
- * `appendOutput` escapes raw text on the way in, while `appendEvent` runs the
- * rich renderer that emits emoji + `<code>`-wrapped arguments for known IDE
- * tools. The final buffer stays in raw Markdown until render time so that
- * rollover can still cut on source-text newline boundaries.
+ * `appendOutput` escapes raw text on the way in, while `appendEvent` /
+ * `appendNormalized` run the rich renderer that emits emoji + `<code>`-wrapped
+ * arguments for known IDE tools. Assistant text is intentionally NOT previewed
+ * in the blockquote — the final reply is fed through `appendFinal` and
+ * rendered below with full Markdown, so inline previews would duplicate it
+ * with raw markdown symbols leaking. The final buffer stays in raw Markdown
+ * until render time so that rollover can still cut on source-text newline
+ * boundaries.
  */
 
 import type { Sender } from "./sender.ts";
 import { escapeHtml, markdownToTelegramHTML } from "./format.ts";
+import type { NormalizedContent } from "@korchasa/ai-ide-cli";
 
 /** Injectable clock so tests can advance time deterministically. */
 export interface StreamerClock {
@@ -49,7 +54,9 @@ export interface StreamerOptions {
 const DEFAULT_MIN_EDIT_MS = 1000;
 // TG hard limit is 4096; leave headroom for terminal marker + safety.
 const DEFAULT_ROLLOVER_AT = 3800;
-const DEFAULT_PLACEHOLDER = "…";
+// Single emoji (no surrounding text) so TG clients render it in large-emoji
+// mode and auto-animate it until the first real edit lands.
+const DEFAULT_PLACEHOLDER = "🤔";
 const PARSE_MODE = "HTML";
 const BQ_OPEN = "<blockquote expandable>";
 const BQ_CLOSE = "</blockquote>";
@@ -59,25 +66,25 @@ const ERR_PREFIX = "\n\n<b>✗</b> ";
 const STREAM_PREFIX_RE = /^\[stream\](?:\s+|$)/;
 const TEXT_PREFIX_RE = /^text:\s*/;
 
-const TOOL_EMOJI: Record<string, string> = {
-  Read: "📖",
-  Write: "📝",
-  Edit: "✏️",
-  MultiEdit: "✂️",
-  Bash: "🐚",
-  Grep: "🔍",
-  Glob: "📁",
-  Agent: "🤖",
-  Task: "🤖",
-  WebFetch: "🌐",
-  WebSearch: "🔎",
-  TodoWrite: "📋",
-  NotebookEdit: "📓",
-  NotebookRead: "📓",
-};
-const DEFAULT_TOOL_EMOJI = "🛠️";
+// Single emoji for every tool — runtime-agnostic. Avoids per-IDE name maps
+// that drift the moment Claude/codex/opencode rename a tool.
+const TOOL_EMOJI = "🛠️";
 const MAX_TOOL_DETAIL = 80;
-const MAX_TEXT_PREVIEW = 200;
+// Ordered probe list. First string-valued match wins. Names span Claude
+// snake_case (`file_path`), codex camelCase (`filePath`), and shared keys
+// (`command`, `query`, `pattern`, `url`, `path`). `description` first so an
+// explicit human-friendly summary (e.g. Bash description) beats raw args.
+const PRIMARY_DETAIL_KEYS = [
+  "description",
+  "command",
+  "query",
+  "pattern",
+  "url",
+  "file_path",
+  "notebook_path",
+  "filePath",
+  "path",
+] as const;
 
 function stripStreamPrefix(line: string): string {
   return line.replace(STREAM_PREFIX_RE, "").replace(TEXT_PREFIX_RE, "");
@@ -166,9 +173,26 @@ export class LiveHandle {
   }
 
   /**
+   * Append a runtime-neutral `NormalizedContent` part from
+   * `ai-ide-cli`'s `extractSessionContent`. Only tool invocations render
+   * (as `{emoji} <b>{name}</b> {detail}`); assistant text (cumulative
+   * or delta) and `final` parts are dropped here — the final reply is
+   * fed into `appendFinal` separately and renders below the blockquote
+   * with full Markdown, so previewing the same text inline would just
+   * duplicate it with raw markdown symbols leaking.
+   */
+  appendNormalized(part: NormalizedContent): void {
+    if (this.#closed) return;
+    const line = renderNormalized(part);
+    if (line === null) return;
+    this.#pushStream(line);
+  }
+
+  /**
    * Append a raw NDJSON event from `ai-ide-cli`. Known Claude shapes
    * (system init, assistant text/tool_use) render as one or more emoji-led
-   * HTML lines; unrecognized shapes drop.
+   * HTML lines; unrecognized shapes drop. Kept for the invoke-mode path in
+   * `Dispatcher`; session-mode uses `appendNormalized` instead.
    */
   appendEvent(event: Record<string, unknown>): void {
     if (this.#closed) return;
@@ -365,61 +389,44 @@ function asString(v: unknown): string | undefined {
   return typeof v === "string" && v.length > 0 ? v : undefined;
 }
 
+/**
+ * Generic tool-detail extractor. Probes `input` against an ordered list of
+ * commonly-used string keys and renders the first hit as `<code>`-wrapped,
+ * truncated, HTML-escaped text. Path-shaped values get the homedir prefix
+ * stripped. Returns `""` when no probe matches — caller renders just the
+ * tool name in that case.
+ *
+ * Runtime-agnostic by design: works for Claude `Bash`/`Read`/`Grep`, codex
+ * `commandExecution`/`fileChange`/`webSearch`, MCP tool inputs, and any
+ * future tool whose payload uses one of the listed keys.
+ */
 function fmtToolDetail(
-  name: string,
   input: Record<string, unknown> | undefined,
 ): string {
   if (!input) return "";
-  switch (name) {
-    case "Read":
-    case "Write":
-    case "Edit":
-    case "MultiEdit": {
-      const path = asString(input.file_path);
-      return path ? code(shortenPath(path)) : "";
-    }
-    case "NotebookEdit":
-    case "NotebookRead": {
-      const path = asString(input.notebook_path) ?? asString(input.file_path);
-      return path ? code(shortenPath(path)) : "";
-    }
-    case "Bash": {
-      const desc = asString(input.description);
-      if (desc) return escapeHtml(truncate(desc, MAX_TOOL_DETAIL));
-      const cmd = asString(input.command);
-      return cmd ? code(cmd) : "";
-    }
-    case "Grep": {
-      const pat = asString(input.pattern);
-      const path = asString(input.path);
-      const left = pat ? code(`/${pat}/`) : "";
-      const right = path ? `in ${code(shortenPath(path))}` : "";
-      return [left, right].filter(Boolean).join(" ");
-    }
-    case "Glob": {
-      const pat = asString(input.pattern);
-      return pat ? code(pat) : "";
-    }
-    case "Agent":
-    case "Task": {
-      const desc = asString(input.description) ?? asString(input.subagent_type);
-      return desc ? escapeHtml(truncate(desc, MAX_TOOL_DETAIL)) : "";
-    }
-    case "WebFetch": {
-      const url = asString(input.url);
-      return url ? code(url) : "";
-    }
-    case "WebSearch": {
-      const q = asString(input.query);
-      return q ? code(q) : "";
-    }
-    case "TodoWrite": {
-      const todos = input.todos;
-      return Array.isArray(todos) ? `${todos.length} items` : "";
-    }
-    default:
-      return "";
+  for (const key of PRIMARY_DETAIL_KEYS) {
+    const v = asString(input[key]);
+    if (!v) continue;
+    return code(shortenPath(v));
   }
+  return "";
+}
+
+/**
+ * Render one normalized content part as an HTML line (escaped, may contain
+ * `<code>`/`<b>`). Only tool invocations render in the stream blockquote;
+ * assistant text (cumulative or delta) and `final` are dropped — the final
+ * reply is owned by `appendFinal` and rendered outside the blockquote, so
+ * previewing it inline duplicates the same content with markdown symbols
+ * leaking as raw characters.
+ */
+function renderNormalized(part: NormalizedContent): string | null {
+  if (part.kind === "tool") {
+    const detail = fmtToolDetail(part.input);
+    const prefix = `${TOOL_EMOJI} <b>${escapeHtml(part.name)}</b>`;
+    return detail ? `${prefix} ${detail}` : prefix;
+  }
+  return null;
 }
 
 /** Render one IDE event as 0+ HTML lines (escaped, may contain `<code>`/`<b>`). */
@@ -435,22 +442,16 @@ function renderEvent(event: Record<string, unknown>): string | null {
     if (!Array.isArray(contents)) return null;
     const lines: string[] = [];
     for (const block of contents as Array<Record<string, unknown>>) {
-      if (
-        block.type === "text" &&
-        typeof block.text === "string" &&
-        block.text.length > 0
-      ) {
-        const collapsed = block.text.replace(/\s+/g, " ").trim();
-        if (collapsed.length === 0) continue;
-        lines.push(`💬 ${escapeHtml(truncate(collapsed, MAX_TEXT_PREVIEW))}`);
-      } else if (block.type === "tool_use") {
+      // Text blocks deliberately skipped — the cumulative assistant text
+      // IS the final reply for Claude/Cursor, and `appendFinal` renders it
+      // outside the blockquote with proper Markdown. Previewing it inline
+      // would duplicate the answer with raw `**` / backticks leaking.
+      if (block.type === "tool_use") {
         const name = asString(block.name) ?? "?";
-        const emoji = TOOL_EMOJI[name] ?? DEFAULT_TOOL_EMOJI;
         const detail = fmtToolDetail(
-          name,
           block.input as Record<string, unknown> | undefined,
         );
-        const prefix = `${emoji} <b>${escapeHtml(name)}</b>`;
+        const prefix = `${TOOL_EMOJI} <b>${escapeHtml(name)}</b>`;
         lines.push(detail ? `${prefix} ${detail}` : prefix);
       }
     }

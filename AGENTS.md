@@ -77,6 +77,7 @@ Maps source code paths to documentation sections that describe them. Used by com
 - `engine/tg/format.ts` → SDS §3.10; SRS FR-EVENT-STREAM.
 - `engine/session.ts` → SDS §3.6; SRS FR-SESSION-RESUME, FR-SETTINGS.
 - `engine/dispatcher.ts` → SDS §3.7; SRS FR-CMD-EXEC, FR-SESSION-RESUME, FR-EVENT-STREAM, FR-SETTINGS.
+- `engine/ide_session.ts` → SDS §3.11; SRS FR-CMD-EXEC, FR-SESSION-RESUME, FR-EVENT-STREAM.
 - `engine/settings.ts` → SDS §3.9; SRS FR-SETTINGS.
 - `engine/log.ts` → SDS §6 (Logs); redaction covers SRS Non-Functional §4 Sec.
 

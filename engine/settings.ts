@@ -93,6 +93,21 @@ export const WHITELISTS: Record<SupportedIde, IdeWhitelist> = {
     efforts: [],
     permissionModes: [],
   },
+  codex: {
+    // Common OpenAI models; codex accepts any via `-m`, whitelist only
+    // constrains the TG `/model` command surface.
+    models: ["gpt-5", "gpt-5-codex", "o3", "o4-mini"],
+    // Codex reasoning effort is tuned via `-c model_reasoning_effort=…`;
+    // not mapped from TG `/effort` in v1.
+    efforts: [],
+    // ai-ide-cli translates these to `--sandbox`/`approval_policy` overrides.
+    permissionModes: [
+      "default",
+      "plan",
+      "acceptEdits",
+      "bypassPermissions",
+    ],
+  },
 };
 
 export type ValidationResult<T> =

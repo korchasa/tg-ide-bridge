@@ -309,7 +309,7 @@ Deno.test("LiveHandle HTML-escapes <, >, & in stream content", async () => {
   );
 });
 
-Deno.test("LiveHandle.appendEvent renders Read tool with 📖 emoji and <code>-wrapped path", async () => {
+Deno.test("LiveHandle.appendEvent renders tool with generic 🛠️ emoji and <code>-wrapped detail (file_path)", async () => {
   const { sender, calls } = mockSender();
   const clock = new ManualClock();
   const streamer = new Streamer({ sender, clock });
@@ -330,12 +330,12 @@ Deno.test("LiveHandle.appendEvent renders Read tool with 📖 emoji and <code>-w
   const text = String(
     calls.filter((c) => c.method === "editMessageText").at(-1)!.body.text,
   );
-  assertStringIncludes(text, "📖");
+  assertStringIncludes(text, "🛠️");
   assertStringIncludes(text, "<b>Read</b>");
   assertStringIncludes(text, "<code>engine/cli.ts</code>");
 });
 
-Deno.test("LiveHandle.appendEvent renders Bash with description fallback", async () => {
+Deno.test("LiveHandle.appendEvent prefers description over command", async () => {
   const { sender, calls } = mockSender();
   const clock = new ManualClock();
   const streamer = new Streamer({ sender, clock });
@@ -356,12 +356,12 @@ Deno.test("LiveHandle.appendEvent renders Bash with description fallback", async
   const text = String(
     calls.filter((c) => c.method === "editMessageText").at(-1)!.body.text,
   );
-  assertStringIncludes(text, "🐚");
+  assertStringIncludes(text, "🛠️");
   assertStringIncludes(text, "<b>Bash</b>");
-  assertStringIncludes(text, "List dir");
+  assertStringIncludes(text, "<code>List dir</code>");
 });
 
-Deno.test("LiveHandle.appendEvent renders Bash command in <code> when no description", async () => {
+Deno.test("LiveHandle.appendEvent falls back to command when no description", async () => {
   const { sender, calls } = mockSender();
   const clock = new ManualClock();
   const streamer = new Streamer({ sender, clock });
@@ -381,7 +381,7 @@ Deno.test("LiveHandle.appendEvent renders Bash command in <code> when no descrip
   assertStringIncludes(text, "<code>ls -la</code>");
 });
 
-Deno.test("LiveHandle.appendEvent renders Grep with pattern and path", async () => {
+Deno.test("LiveHandle.appendEvent picks first priority key (pattern beats path)", async () => {
   const { sender, calls } = mockSender();
   const clock = new ManualClock();
   const streamer = new Streamer({ sender, clock });
@@ -402,12 +402,12 @@ Deno.test("LiveHandle.appendEvent renders Grep with pattern and path", async () 
   const text = String(
     calls.filter((c) => c.method === "editMessageText").at(-1)!.body.text,
   );
-  assertStringIncludes(text, "🔍");
-  assertStringIncludes(text, "<code>/foo/</code>");
-  assertStringIncludes(text, "<code>engine</code>");
+  assertStringIncludes(text, "🛠️");
+  assertStringIncludes(text, "<b>Grep</b>");
+  assertStringIncludes(text, "<code>foo</code>");
 });
 
-Deno.test("LiveHandle.appendEvent renders text block with 💬 emoji", async () => {
+Deno.test("LiveHandle.appendEvent drops assistant text blocks (final owns them)", async () => {
   const { sender, calls } = mockSender();
   const clock = new ManualClock();
   const streamer = new Streamer({ sender, clock });
@@ -419,10 +419,66 @@ Deno.test("LiveHandle.appendEvent renders text block with 💬 emoji", async () 
     },
   });
   await live.finalize("ok");
+  const edits = calls.filter((c) => c.method === "editMessageText");
+  assertEquals(
+    edits.length,
+    0,
+    `text-only assistant event must not produce an edit, got: ${
+      edits.map((e) => e.body.text).join(" | ")
+    }`,
+  );
+});
+
+Deno.test("LiveHandle.appendEvent drops text blocks but keeps tool_use in the same assistant event", async () => {
+  const { sender, calls } = mockSender();
+  const clock = new ManualClock();
+  const streamer = new Streamer({ sender, clock });
+  const live = await streamer.open(42);
+  live.appendEvent({
+    type: "assistant",
+    message: {
+      content: [
+        { type: "text", text: "running search" },
+        { type: "tool_use", name: "Grep", input: { pattern: "foo" } },
+      ],
+    },
+  });
+  await live.finalize("ok");
   const text = String(
     calls.filter((c) => c.method === "editMessageText").at(-1)!.body.text,
   );
-  assertStringIncludes(text, "💬 thinking out loud");
+  assertStringIncludes(text, "🛠️");
+  assertStringIncludes(text, "<b>Grep</b>");
+  assertStringIncludes(text, "<code>foo</code>");
+  assert(
+    !text.includes("💬"),
+    `text block must not render in stream: ${text}`,
+  );
+  assert(
+    !text.includes("running search"),
+    `text block content leaked: ${text}`,
+  );
+});
+
+Deno.test("LiveHandle.appendNormalized drops cumulative text (final owns it)", async () => {
+  const { sender, calls } = mockSender();
+  const clock = new ManualClock();
+  const streamer = new Streamer({ sender, clock });
+  const live = await streamer.open(42);
+  live.appendNormalized({
+    kind: "text",
+    text: "# Report\n**bold** and `code`",
+    cumulative: true,
+  });
+  await live.finalize("ok");
+  const edits = calls.filter((c) => c.method === "editMessageText");
+  assertEquals(
+    edits.length,
+    0,
+    `cumulative text must not produce edits, got: ${
+      edits.map((e) => e.body.text).join(" | ")
+    }`,
+  );
 });
 
 Deno.test("LiveHandle.appendEvent renders system init with model", async () => {
@@ -443,7 +499,7 @@ Deno.test("LiveHandle.appendEvent renders system init with model", async () => {
   assertStringIncludes(text, "<code>claude-opus-4-7</code>");
 });
 
-Deno.test("LiveHandle.appendEvent uses fallback emoji for unknown tool", async () => {
+Deno.test("LiveHandle.appendEvent renders unknown tool as bare name (no detail)", async () => {
   const { sender, calls } = mockSender();
   const clock = new ManualClock();
   const streamer = new Streamer({ sender, clock });
@@ -485,6 +541,53 @@ Deno.test("LiveHandle.appendEvent escapes HTML in tool input", async () => {
   );
   assertStringIncludes(text, "&lt;script&gt;");
   assert(!text.includes("<script>"), "raw <script> must not leak");
+});
+
+Deno.test("LiveHandle.appendNormalized renders codex commandExecution generically", async () => {
+  const { sender, calls } = mockSender();
+  const clock = new ManualClock();
+  const streamer = new Streamer({ sender, clock });
+  const live = await streamer.open(42);
+  // Shape mirrors what extractSessionContent emits for a codex
+  // `item/completed` with `item.type === "commandExecution"` — every item
+  // field except `id` and `type` is copied into `input`.
+  live.appendNormalized({
+    kind: "tool",
+    id: "call_PiUa4NaJIes7oKM4GFfvowXa",
+    name: "commandExecution",
+    input: {
+      command: "/bin/zsh -lc 'NO_COLOR=1 rg -n \"foo\" .'",
+      cwd: "/Users/x/repo",
+      processId: "44274",
+      status: "completed",
+      exitCode: 0,
+    },
+  });
+  await live.finalize("ok");
+  const text = String(
+    calls.filter((c) => c.method === "editMessageText").at(-1)!.body.text,
+  );
+  assertStringIncludes(text, "🛠️");
+  assertStringIncludes(text, "<b>commandExecution</b>");
+  assertStringIncludes(text, "rg -n");
+});
+
+Deno.test("LiveHandle.appendNormalized drops non-cumulative text deltas", async () => {
+  const { sender, calls } = mockSender();
+  const clock = new ManualClock();
+  const streamer = new Streamer({ sender, clock });
+  const live = await streamer.open(42);
+  live.appendNormalized({ kind: "text", text: "Пап", cumulative: false });
+  live.appendNormalized({ kind: "text", text: "ки", cumulative: false });
+  await live.finalize("ok");
+  const edits = calls.filter((c) => c.method === "editMessageText");
+  assertEquals(
+    edits.length,
+    0,
+    `delta-text must not produce edits, got: ${
+      edits.map((e) => e.body.text).join(" | ")
+    }`,
+  );
 });
 
 Deno.test("LiveHandle.appendEvent skips unknown event types", async () => {

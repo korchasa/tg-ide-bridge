@@ -8,7 +8,12 @@
  * `ConfigError` with a clear field-level message.
  */
 
-export const SUPPORTED_IDES = ["claude", "opencode", "cursor"] as const;
+export const SUPPORTED_IDES = [
+  "claude",
+  "opencode",
+  "cursor",
+  "codex",
+] as const;
 export type SupportedIde = typeof SUPPORTED_IDES[number];
 
 export interface Config {

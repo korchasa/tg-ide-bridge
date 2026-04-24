@@ -20,8 +20,9 @@ import type { Streamer } from "./tg/streamer.ts";
 import type { TgUpdate } from "./tg/types.ts";
 import { sanitizeError } from "./log.ts";
 import type { Logger } from "./log.ts";
-import type { RuntimeAdapter } from "@korchasa/ai-ide-cli";
+import type { ExtraArgsMap, RuntimeAdapter } from "@korchasa/ai-ide-cli";
 import type { SessionStore } from "./session.ts";
+import { SessionManager } from "./ide_session.ts";
 import {
   type EffectiveSettings,
   effectiveSettings,
@@ -45,10 +46,12 @@ export interface DispatcherDeps {
   streamer?: Streamer;
   log: Logger;
   /**
-   * Kill all tracked IDE subprocesses. Default wires `killAll` from
-   * `@korchasa/ai-ide-cli`'s process registry; injectable for tests.
+   * Opt-in session-mode manager. When present (and `streamer` is set), turns
+   * reuse one long-lived IDE subprocess; otherwise the dispatcher falls back
+   * to one-shot `invoke()` per turn. Tests inject a stub; production wires
+   * this automatically in `cli.ts` when `ide.capabilities.session` is true.
    */
-  killRunning?: () => Promise<void> | void;
+  sessionManager?: SessionManager;
 }
 
 const TYPING_REFRESH_MS = 4_000;
@@ -60,9 +63,12 @@ export class Dispatcher {
   readonly #session?: SessionStore;
   readonly #streamer?: Streamer;
   readonly #log: Logger;
-  readonly #killRunning?: () => Promise<void> | void;
+  readonly #sessionManager?: SessionManager;
   #queue: Promise<void> = Promise.resolve();
   #inFlight = 0;
+  /** Per-turn abort controller. `/stop` calls `.abort()`; invoke-mode pipes
+   * the signal to `ide.invoke`, session-mode pipes it to `SessionManager`. */
+  #currentAbortCtrl: AbortController | null = null;
 
   constructor(deps: DispatcherDeps) {
     this.#cfg = deps.cfg;
@@ -71,7 +77,12 @@ export class Dispatcher {
     this.#session = deps.session;
     this.#streamer = deps.streamer;
     this.#log = deps.log;
-    this.#killRunning = deps.killRunning;
+    this.#sessionManager = deps.sessionManager;
+  }
+
+  /** Release session-mode resources on daemon shutdown. */
+  async close(): Promise<void> {
+    await this.#sessionManager?.close();
   }
 
   handle(update: TgUpdate): Promise<void> {
@@ -88,15 +99,13 @@ export class Dispatcher {
   }
 
   async #handleStop(chatId: number, threadId?: number): Promise<void> {
-    // FR-SETTINGS: /stop aborts current IDE invocation.
+    // FR-SETTINGS: /stop aborts current IDE invocation via AbortSignal.
+    // Invoke-mode: the signal short-circuits `ide.invoke` retry loop and
+    //   SIGTERMs the subprocess via `ai-ide-cli`.
+    // Session-mode: the signal propagates into `SessionManager.runTurn`,
+    //   which aborts the session — next turn reopens with the stored id.
     const wasInFlight = this.#inFlight > 0;
-    if (this.#killRunning) {
-      try {
-        await this.#killRunning();
-      } catch (err) {
-        this.#log.warn("killRunning failed", { err: sanitizeError(err) });
-      }
-    }
+    this.#currentAbortCtrl?.abort("stopped by user");
     const reply = wasInFlight ? "IDE call stopped" : "no active IDE call";
     await this.#reply(chatId, threadId, reply);
   }
@@ -201,6 +210,9 @@ export class Dispatcher {
   }
 
   async #handleReset(chatId: number, threadId?: number): Promise<void> {
+    if (this.#sessionManager) {
+      await this.#sessionManager.reset();
+    }
     if (this.#session) {
       await this.#session.resetSession();
     }
@@ -308,15 +320,47 @@ export class Dispatcher {
     text: string,
   ): Promise<void> {
     const eff = effectiveSettings(await this.#loadStoredSettings());
+    const ctrl = new AbortController();
+    this.#currentAbortCtrl = ctrl;
     this.#inFlight++;
     try {
-      if (this.#streamer) {
-        await this.#runIdeStreamed(chatId, threadId, text, eff);
+      if (this.#sessionManager && this.#streamer) {
+        await this.#runSessionStreamed(chatId, threadId, text, eff, ctrl);
         return;
       }
-      await this.#runIdeBatched(chatId, threadId, text, eff);
+      if (this.#streamer) {
+        await this.#runIdeStreamed(chatId, threadId, text, eff, ctrl);
+        return;
+      }
+      await this.#runIdeBatched(chatId, threadId, text, eff, ctrl);
     } finally {
       this.#inFlight--;
+      if (this.#currentAbortCtrl === ctrl) this.#currentAbortCtrl = null;
+    }
+  }
+
+  /** Session-mode streaming path: one long-lived IDE subprocess, events
+   * demultiplexed per turn via `SessionManager`. */
+  async #runSessionStreamed(
+    chatId: number,
+    threadId: number | undefined,
+    text: string,
+    eff: EffectiveSettings,
+    ctrl: AbortController,
+  ): Promise<void> {
+    const manager = this.#sessionManager!;
+    const streamer = this.#streamer!;
+    const live = await streamer.open(chatId, threadId);
+    try {
+      await manager.runTurn({
+        live,
+        text,
+        settings: eff,
+        stopSignal: ctrl.signal,
+      });
+    } catch (err) {
+      this.#log.error("session run failed", { err: sanitizeError(err) });
+      await live.finalize("error", sanitizeError(err)).catch(() => {});
     }
   }
 
@@ -326,6 +370,7 @@ export class Dispatcher {
     threadId: number | undefined,
     text: string,
     eff: EffectiveSettings,
+    ctrl: AbortController,
   ): Promise<void> {
     const ide = this.#ide!;
     const streamer = this.#streamer!;
@@ -344,6 +389,7 @@ export class Dispatcher {
         permissionMode: eff.permissionMode,
         model: eff.model,
         extraArgs,
+        signal: ctrl.signal,
         onEvent: (event) => live.appendEvent(event),
       });
       if (!res.output) {
@@ -382,6 +428,7 @@ export class Dispatcher {
     threadId: number | undefined,
     text: string,
     eff: EffectiveSettings,
+    ctrl: AbortController,
   ): Promise<void> {
     const ide = this.#ide!;
     const typing = this.#startTyping(chatId, threadId);
@@ -400,6 +447,7 @@ export class Dispatcher {
         permissionMode: eff.permissionMode,
         model: eff.model,
         extraArgs,
+        signal: ctrl.signal,
       });
       if (!res.output) {
         await this.#sender.send(
@@ -467,8 +515,8 @@ export class Dispatcher {
 function effortToExtraArgs(
   ide: SupportedIde,
   effort?: string,
-): string[] | undefined {
+): ExtraArgsMap | undefined {
   if (!effort) return undefined;
   if (ide !== "claude") return undefined;
-  return ["--effort", effort];
+  return { "--effort": effort };
 }
