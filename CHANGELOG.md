@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [0.1.3](https://github.com/korchasa/tg-ide-bridge/compare/v0.1.2...v0.1.3) (2026-04-25)
+
+
+### Features
+
+* **capabilities:** expose IDE skills/commands as TG slash commands ([dcad1c3](https://github.com/korchasa/tg-ide-bridge/commit/dcad1c3558ff5c61d98cf41e651a82b2638a09ce))
+* **engine:** adopt ai-ide-cli 0.5.3 with session-mode + codex IDE ([9e4826e](https://github.com/korchasa/tg-ide-bridge/commit/9e4826ebd22cc248119f7c214ff3a3bb539484d8))
+
+
+### Build System
+
+* **check:** enforce strict typecheck and stricter lint rules ([a5a29da](https://github.com/korchasa/tg-ide-bridge/commit/a5a29daf583b7859cf7308692346c1cc1ead3c72))
+
+
+### Tests
+
+* **e2e:** real-IDE end-to-end suite against actual CLI binaries ([d8f10c1](https://github.com/korchasa/tg-ide-bridge/commit/d8f10c1a4097ae9fc2a31bf32c4a9b712fc1245a))
+
 ### [0.1.2](https://github.com/korchasa/tg-ide-bridge/compare/v0.1.1...v0.1.2) (2026-04-19)
 
 
