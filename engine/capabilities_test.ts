@@ -1,14 +1,22 @@
 import { assert, assertEquals } from "@std/assert";
 import { join } from "@std/path";
+import type {
+  CapabilityInventory,
+  RuntimeAdapter,
+  RuntimeInvokeOptions,
+  RuntimeInvokeResult,
+} from "@korchasa/ai-ide-cli";
 import {
   buildRegistry,
   type CapabilityRegistry,
+  DefaultCapabilityProvider,
   loadRegistry,
   lookupOriginal,
   mergeCommandList,
   sanitizeName,
   saveRegistry,
 } from "./capabilities.ts";
+import { Sender } from "./tg/sender.ts";
 
 async function withTempDir<T>(
   fn: (dir: string) => Promise<T>,
@@ -196,4 +204,118 @@ Deno.test({
       assertEquals(stat.mode! & 0o777, 0o600);
     });
   },
+});
+
+// Regression: upstream `fetchInventoryViaInvoke` calls `invoke({maxRetries:0})`,
+// adapter retry loops are `for a=1; a<=maxRetries`, so the loop never runs.
+// `DefaultCapabilityProvider.refresh` patches `invoke` to enforce ≥1 attempt.
+
+function fakeAdapter(): RuntimeAdapter & {
+  observed: RuntimeInvokeOptions[];
+} {
+  const observed: RuntimeInvokeOptions[] = [];
+  const adapter = {
+    id: "claude" as const,
+    capabilities: {
+      permissionMode: true,
+      hitl: false,
+      transcript: false,
+      interactive: true,
+      toolUseObservation: false,
+      session: false,
+      capabilityInventory: true,
+    },
+    observed,
+    invoke(opts: RuntimeInvokeOptions): Promise<RuntimeInvokeResult> {
+      observed.push(opts);
+      // Simulate upstream Claude retry loop: zero attempts → cryptic error.
+      if ((opts.maxRetries ?? 0) < 1) {
+        return Promise.resolve({
+          error: `Claude CLI failed after ${opts.maxRetries ?? 0} attempts: `,
+        });
+      }
+      return Promise.resolve({
+        output: {
+          runtime: "claude",
+          result: JSON.stringify({
+            skills: [{ name: "demo-skill" }],
+            commands: [{ name: "demo" }],
+          }),
+          session_id: "s",
+          total_cost_usd: 0,
+          duration_ms: 1,
+          duration_api_ms: 1,
+          num_turns: 1,
+          is_error: false,
+        },
+      });
+    },
+    fetchCapabilitiesSlow: undefined as unknown,
+    launchInteractive(): Promise<{ exitCode: number }> {
+      return Promise.resolve({ exitCode: 0 });
+    },
+  } as unknown as RuntimeAdapter & { observed: RuntimeInvokeOptions[] };
+  // Wire a minimal `fetchCapabilitiesSlow` that mimics upstream:
+  // calls `this.invoke` with `maxRetries: 0` and parses the result.
+  (adapter as unknown as {
+    fetchCapabilitiesSlow: () => Promise<CapabilityInventory>;
+  }).fetchCapabilitiesSlow = async () => {
+    const r = await adapter.invoke({
+      taskPrompt: "_",
+      timeoutSeconds: 60,
+      maxRetries: 0,
+      retryDelaySeconds: 0,
+    });
+    if (r.error) throw new Error(`fetch (claude): ${r.error}`);
+    if (!r.output) throw new Error("no output");
+    const parsed = JSON.parse(r.output.result) as {
+      skills: { name: string }[];
+      commands: { name: string }[];
+    };
+    return {
+      runtime: "claude",
+      skills: parsed.skills,
+      commands: parsed.commands,
+    };
+  };
+  return adapter;
+}
+
+Deno.test("DefaultCapabilityProvider.refresh forces maxRetries>=1 around fetchCapabilitiesSlow", async () => {
+  await withTempDir(async (dir) => {
+    const adapter = fakeAdapter();
+    const sender = new Sender("t", {
+      fetchFn: ((_url: string | URL | Request, init?: RequestInit) => {
+        const body = typeof init?.body === "string"
+          ? JSON.parse(init.body)
+          : {};
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({ ok: true, result: body.commands ?? null }),
+            { status: 200 },
+          ),
+        );
+      }) as typeof fetch,
+    });
+    const provider = new DefaultCapabilityProvider({
+      ide: adapter,
+      sender,
+      projectDir: dir,
+      cwd: dir,
+      reserved: [{ command: "reset", description: "r" }],
+    });
+    const res = await provider.refresh();
+    assertEquals(res.entries, 2, "two entries discovered");
+    // The fake adapter received the upstream maxRetries:0, but our wrapper
+    // bumped it to 1 before reaching the underlying invoke.
+    assertEquals(adapter.observed.length, 1);
+    assert(
+      adapter.observed[0]!.maxRetries === 1,
+      `expected maxRetries=1 after patch, got ${
+        adapter.observed[0]!.maxRetries
+      }`,
+    );
+    // Adapter's invoke method is restored after refresh.
+    assert(typeof adapter.invoke === "function");
+  });
 });

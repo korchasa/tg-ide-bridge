@@ -263,15 +263,34 @@ export class DefaultCapabilityProvider implements CapabilityProvider {
   }
 
   async refresh(): Promise<RefreshResult> {
-    if (!this.#ide.fetchCapabilitiesSlow) {
+    const fetcher = this.#ide.fetchCapabilitiesSlow?.bind(this.#ide);
+    if (!fetcher) {
       throw new Error(
         `runtime '${this.#ide.id}' does not implement fetchCapabilitiesSlow`,
       );
     }
-    const inv = await this.#ide.fetchCapabilitiesSlow({
-      cwd: this.#cwd,
-      timeoutSeconds: this.#fetchTimeoutSeconds,
-    });
+    // Workaround for ai-ide-cli@0.5.x: `fetchInventoryViaInvoke` calls
+    // `invoke({ maxRetries: 0 })`, but adapter retry loops are
+    // `for attempt = 1; attempt <= maxRetries`, so the loop never runs and
+    // the call returns "<runtime> CLI failed after 0 attempts: ". Patch
+    // `invoke` for the duration of this call to enforce a minimum of 1
+    // attempt. Safe under v1's single-in-flight invariant.
+    const ide = this.#ide;
+    const origInvoke = ide.invoke.bind(ide);
+    ide.invoke = ((opts) =>
+      origInvoke({
+        ...opts,
+        maxRetries: Math.max(1, opts.maxRetries ?? 0),
+      })) as typeof ide.invoke;
+    let inv: CapabilityInventory;
+    try {
+      inv = await fetcher({
+        cwd: this.#cwd,
+        timeoutSeconds: this.#fetchTimeoutSeconds,
+      });
+    } finally {
+      ide.invoke = origInvoke;
+    }
     const reservedSet = new Set(this.#reserved.map((c) => c.command));
     const { registry, skipped } = buildRegistry(inv, reservedSet);
     await saveRegistry(this.#projectDir, registry);
