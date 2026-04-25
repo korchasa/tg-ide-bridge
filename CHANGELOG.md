@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [0.1.4](https://github.com/korchasa/tg-ide-bridge/compare/v0.1.3...v0.1.4) (2026-04-25)
+
+
+### Bug Fixes
+
+* **capabilities:** force maxRetries>=1 around fetchCapabilitiesSlow ([3b92c15](https://github.com/korchasa/tg-ide-bridge/commit/3b92c15ef418d10b408c15695ef5635bb7d58a48))
+
 ### [0.1.3](https://github.com/korchasa/tg-ide-bridge/compare/v0.1.2...v0.1.3) (2026-04-25)
 
 
