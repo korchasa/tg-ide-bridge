@@ -69,8 +69,21 @@ Runtime-tunable IDE settings (persisted in
 `clear` reverts the field to the built-in default (numeric) or unsets it
 (model / effort / permission mode).
 
-On startup the daemon registers these commands via Telegram's
-`setMyCommands` so they appear in the `/` menu of all bot clients.
+IDE skills and slash commands:
+
+- `/refresh` — discover the IDE's skills and slash commands (one LLM turn)
+  and register them as TG bot commands so they appear in the `/`-menu.
+  Names are sanitized to `^[a-z0-9_]{1,32}$` (e.g. `flowai-skill-write-prd`
+  → `/flowai_skill_write_prd`); the daemon rewrites them back to the
+  original IDE name when forwarding. The result is cached in
+  `.tg-ide-bridge/capabilities.json` so daemon restarts re-register the
+  menu without paying the LLM cost again. IDEs without inventory support
+  (e.g. `cursor`) reply "not supported"; collisions with reserved daemon
+  commands are dropped silently.
+
+On startup the daemon registers reserved commands plus any cached IDE
+capabilities via Telegram's `setMyCommands` so they appear in the `/` menu
+of all bot clients.
 
 ### Whitelists per IDE
 

@@ -23,6 +23,7 @@ import type { Logger } from "./log.ts";
 import type { ExtraArgsMap, RuntimeAdapter } from "@korchasa/ai-ide-cli";
 import type { SessionStore } from "./session.ts";
 import { SessionManager } from "./ide_session.ts";
+import { type CapabilityProvider, lookupOriginal } from "./capabilities.ts";
 import {
   type EffectiveSettings,
   effectiveSettings,
@@ -52,6 +53,13 @@ export interface DispatcherDeps {
    * this automatically in `cli.ts` when `ide.capabilities.session` is true.
    */
   sessionManager?: SessionManager;
+  /**
+   * IDE capability registry: drives `/refresh` and rewrites discovered TG
+   * commands (`/<tgName>`) to their original IDE name before forwarding.
+   * Optional — when absent, `/refresh` replies "not configured" and unknown
+   * `/`-prefixed messages forward verbatim.
+   */
+  capabilities?: CapabilityProvider;
 }
 
 const TYPING_REFRESH_MS = 4_000;
@@ -64,6 +72,7 @@ export class Dispatcher {
   readonly #streamer?: Streamer;
   readonly #log: Logger;
   readonly #sessionManager?: SessionManager;
+  readonly #capabilities?: CapabilityProvider;
   #queue: Promise<void> = Promise.resolve();
   #inFlight = 0;
   /** Per-turn abort controller. `/stop` calls `.abort()`; invoke-mode pipes
@@ -78,6 +87,7 @@ export class Dispatcher {
     this.#streamer = deps.streamer;
     this.#log = deps.log;
     this.#sessionManager = deps.sessionManager;
+    this.#capabilities = deps.capabilities;
   }
 
   /** Release session-mode resources on daemon shutdown. */
@@ -118,18 +128,35 @@ export class Dispatcher {
     const text = msg.text;
 
     const trimmed = text.trim();
+    let prompt = text;
     if (trimmed.startsWith("/")) {
       if (await this.#tryCommand(chatId, threadId, trimmed)) return;
+      // FR-CAPABILITY-INVENTORY: rewrite /<tgName> → /<originalName>.
+      prompt = this.#rewriteDiscovered(trimmed);
     }
 
     if (!this.#ide) {
-      await this.#sender.send(chatId, text, threadId).catch((err) => {
+      await this.#sender.send(chatId, prompt, threadId).catch((err) => {
         this.#log.error("send failed", { err: sanitizeError(err) });
       });
       return;
     }
 
-    await this.#runIde(chatId, threadId, text);
+    await this.#runIde(chatId, threadId, prompt);
+  }
+
+  /** Rewrite `/<tgName>[ args]` to `/<originalName>[ args]` when the head
+   * matches a discovered capability; otherwise return input unchanged. */
+  #rewriteDiscovered(trimmed: string): string {
+    const reg = this.#capabilities?.current() ?? null;
+    if (!reg) return trimmed;
+    const space = trimmed.search(/\s/);
+    const head = space === -1 ? trimmed : trimmed.slice(0, space);
+    const tail = space === -1 ? "" : trimmed.slice(space);
+    const tgName = head.slice(1);
+    const original = lookupOriginal(reg, tgName);
+    if (!original || original === tgName) return trimmed;
+    return `/${original}${tail}`;
   }
 
   /** Returns true if `trimmed` matched a command (handled or rejected). */
@@ -205,8 +232,59 @@ export class Dispatcher {
           validateRetryDelaySeconds,
         );
         return true;
+      case "/refresh":
+        await this.#handleRefresh(chatId, threadId);
+        return true;
     }
     return false;
+  }
+
+  // FR-CAPABILITY-INVENTORY
+  async #handleRefresh(
+    chatId: number,
+    threadId: number | undefined,
+  ): Promise<void> {
+    if (!this.#capabilities) {
+      await this.#reply(
+        chatId,
+        threadId,
+        "capability inventory not configured",
+      );
+      return;
+    }
+    if (!this.#ide?.capabilities.capabilityInventory) {
+      await this.#reply(
+        chatId,
+        threadId,
+        `not supported on ide=${this.#cfg.ide}`,
+      );
+      return;
+    }
+    await this.#reply(chatId, threadId, "discovering capabilities…");
+    try {
+      const res = await this.#capabilities.refresh();
+      const reasons = res.skipped.map((s) => s.reason);
+      const tally = reasons.reduce<Record<string, number>>((acc, r) => {
+        acc[r] = (acc[r] ?? 0) + 1;
+        return acc;
+      }, {});
+      const skipNote = res.skipped.length > 0
+        ? ` (skipped ${res.skipped.length}: ${
+          Object.entries(tally).map(([r, n]) => `${r}=${n}`).join(", ")
+        })`
+        : "";
+      await this.#reply(
+        chatId,
+        threadId,
+        `discovered ${res.entries}${skipNote}`,
+      );
+    } catch (err) {
+      await this.#reply(
+        chatId,
+        threadId,
+        `✗ refresh failed: ${sanitizeError(err)}`,
+      );
+    }
   }
 
   async #handleReset(chatId: number, threadId?: number): Promise<void> {

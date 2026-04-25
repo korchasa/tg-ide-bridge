@@ -118,6 +118,19 @@
 - **Deps:** none.
 - **Known limitations:** `***x***` → `<i>&lt;b&gt;x&lt;/b&gt;</i>` (nested bold inside italic gets re-escaped); Markdown inside `#` headers is escaped, not nested; fenced blocks cut across a rollover boundary degrade to plain text on the boundary — acceptable (data preserved, styling only).
 
+### 3.12 `engine/capabilities.ts`
+- **Purpose:** Discover IDE skills/slash-commands and expose them as TG bot commands (FR-CAPABILITY-INVENTORY). Pure CRUD over a JSON cache; discovery is delegated to `RuntimeAdapter.fetchCapabilitiesSlow`.
+- **Interfaces:**
+  - `sanitizeName(raw: string): string | null` — lower-cases, replaces `-`/`.`/whitespace with `_`, drops chars outside `[a-z0-9_]`, truncates to 32. Returns `null` on empty result.
+  - `buildRegistry(inv, reserved): { registry, skipped }` — sanitizes inventory, drops collisions with reserved and post-sanitize duplicates, caps total at `100 - reserved.size` (commands first, then skills, alphabetical by tgName).
+  - `loadRegistry(projectDir): Promise<CapabilityRegistry | null>` / `saveRegistry(projectDir, reg): Promise<void>` — atomic write under `.tg-ide-bridge/capabilities.json`, mode 0600 (same pattern as `SessionStore`).
+  - `mergeCommandList(reserved, registry): { command; description }[]` — input for `Sender.setMyCommands`.
+  - `lookupOriginal(registry, tgName): string | null` — used by dispatcher to rewrite `/<tgName>` → `/<originalName>`.
+- **Data:**
+  - `CapabilityRegistry { runtime, fetchedAt, entries: CapabilityEntry[] }`.
+  - `CapabilityEntry { tgName, originalName, kind: "skill"|"command", description }`.
+- **Deps:** `@std/path`, `@std/fs` for atomic write; `CapabilityInventory`, `CapabilityRef` from `@korchasa/ai-ide-cli`.
+
 ## 4. Data
 - **Entities:**
   - `Config` — deploy-time env-loaded config.

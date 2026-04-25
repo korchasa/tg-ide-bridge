@@ -759,3 +759,153 @@ Deno.test("Dispatcher does not invoke IDE for recognized commands", async () => 
     assertEquals(ide.calls.length, 0);
   });
 });
+
+// FR-CAPABILITY-INVENTORY
+
+import type {
+  CapabilityProvider,
+  CapabilityRegistry,
+  RefreshResult,
+} from "./capabilities.ts";
+
+class FakeProvider implements CapabilityProvider {
+  registry: CapabilityRegistry | null;
+  refreshes = 0;
+  refreshError: Error | null = null;
+  nextResult: RefreshResult = { entries: 0, skipped: [] };
+  constructor(initial: CapabilityRegistry | null = null) {
+    this.registry = initial;
+  }
+  current(): CapabilityRegistry | null {
+    return this.registry;
+  }
+  refresh(): Promise<RefreshResult> {
+    this.refreshes++;
+    if (this.refreshError) return Promise.reject(this.refreshError);
+    return Promise.resolve(this.nextResult);
+  }
+}
+
+Deno.test("Dispatcher /refresh replies 'not supported' when ide lacks inventory", async () => {
+  const { fetchFn, calls } = fakeFetch();
+  const sender = new Sender("t", { fetchFn });
+  const ide = new FakeAdapter(); // capabilityInventory: false
+  const provider = new FakeProvider();
+  const d = new Dispatcher({
+    cfg: cfg(),
+    sender,
+    ide,
+    capabilities: provider,
+    log: silentLog(),
+  });
+  await d.handle(msg("/refresh"));
+  const text = calls.at(-1)!.body.text as string;
+  assertStringIncludes(text, "not supported");
+  assertEquals(provider.refreshes, 0);
+});
+
+Deno.test("Dispatcher /refresh runs provider.refresh when supported and replies summary", async () => {
+  const { fetchFn, calls } = fakeFetch();
+  const sender = new Sender("t", { fetchFn });
+  const ide = new FakeAdapter();
+  ide.capabilities = { ...ide.capabilities, capabilityInventory: true };
+  const provider = new FakeProvider();
+  provider.nextResult = {
+    entries: 5,
+    skipped: [
+      { name: "stop", reason: "reserved" },
+      { name: "x.y", reason: "duplicate" },
+    ],
+  };
+  const d = new Dispatcher({
+    cfg: cfg(),
+    sender,
+    ide,
+    capabilities: provider,
+    log: silentLog(),
+  });
+  await d.handle(msg("/refresh"));
+  assertEquals(provider.refreshes, 1);
+  const sends = calls.filter((c) => c.method === "sendMessage").map((c) =>
+    c.body.text as string
+  );
+  assertStringIncludes(sends.at(0)!, "discovering");
+  const summary = sends.at(-1)!;
+  assertStringIncludes(summary, "discovered 5");
+  assertStringIncludes(summary, "skipped 2");
+  assertStringIncludes(summary, "reserved=1");
+  assertStringIncludes(summary, "duplicate=1");
+});
+
+Deno.test("Dispatcher /refresh reports error trailer on failure", async () => {
+  const { fetchFn, calls } = fakeFetch();
+  const sender = new Sender("t", { fetchFn });
+  const ide = new FakeAdapter();
+  ide.capabilities = { ...ide.capabilities, capabilityInventory: true };
+  const provider = new FakeProvider();
+  provider.refreshError = new Error("kaboom");
+  const d = new Dispatcher({
+    cfg: cfg(),
+    sender,
+    ide,
+    capabilities: provider,
+    log: silentLog(),
+  });
+  await d.handle(msg("/refresh"));
+  const text = calls.at(-1)!.body.text as string;
+  assertStringIncludes(text, "✗ refresh failed");
+  assertStringIncludes(text, "kaboom");
+});
+
+Deno.test("Dispatcher rewrites discovered TG name to original IDE name", async () => {
+  await withTempDir(async (dir) => {
+    const { fetchFn } = fakeFetch();
+    const sender = new Sender("t", { fetchFn });
+    const ide = new FakeAdapter();
+    const session = new SessionStore(dir, "claude");
+    const provider = new FakeProvider({
+      runtime: "claude",
+      fetchedAt: "2026-04-25T00:00:00Z",
+      entries: [
+        {
+          tgName: "flowai_skill_x",
+          originalName: "flowai-skill-x",
+          kind: "skill",
+          description: "skill",
+        },
+      ],
+    });
+    const d = new Dispatcher({
+      cfg: cfg({ project_dir: dir }),
+      sender,
+      ide,
+      session,
+      capabilities: provider,
+      log: silentLog(),
+    });
+    await d.handle(msg("/flowai_skill_x arg1 arg2"));
+    assertEquals(ide.calls.length, 1);
+    assertEquals(ide.calls[0]!.taskPrompt, "/flowai-skill-x arg1 arg2");
+  });
+});
+
+Deno.test("Dispatcher forwards unknown /<cmd> verbatim when not in registry", async () => {
+  await withTempDir(async (dir) => {
+    const { fetchFn } = fakeFetch();
+    const sender = new Sender("t", { fetchFn });
+    const ide = new FakeAdapter();
+    const session = new SessionStore(dir, "claude");
+    const provider = new FakeProvider(null);
+    const d = new Dispatcher({
+      cfg: cfg({ project_dir: dir }),
+      sender,
+      ide,
+      session,
+      capabilities: provider,
+      log: silentLog(),
+    });
+    await d.handle(msg("/unknown foo"));
+    assertEquals(ide.calls.length, 1);
+    assertEquals(ide.calls[0]!.taskPrompt, "/unknown foo");
+  });
+});

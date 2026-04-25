@@ -18,8 +18,14 @@ import { SessionStore } from "./session.ts";
 import { getRuntimeAdapter } from "@korchasa/ai-ide-cli";
 import { SessionManager } from "./ide_session.ts";
 import { createLogger, sanitizeError } from "./log.ts";
+import {
+  type BotCommand,
+  DefaultCapabilityProvider,
+  loadRegistry,
+  mergeCommandList,
+} from "./capabilities.ts";
 
-const BOT_COMMANDS: ReadonlyArray<{ command: string; description: string }> = [
+const BOT_COMMANDS: ReadonlyArray<BotCommand> = [
   { command: "stop", description: "abort the current IDE call" },
   { command: "reset", description: "clear session token" },
   { command: "settings", description: "show effective settings" },
@@ -29,6 +35,7 @@ const BOT_COMMANDS: ReadonlyArray<{ command: string; description: string }> = [
   { command: "timeout", description: "set/show per-invoke timeout (seconds)" },
   { command: "retries", description: "set/show runtime retry attempts" },
   { command: "retry_delay", description: "set/show retry delay (seconds)" },
+  { command: "refresh", description: "rediscover IDE skills/commands" },
 ];
 
 export async function main(_args: string[]): Promise<number> {
@@ -62,6 +69,16 @@ export async function main(_args: string[]): Promise<number> {
       log,
     })
     : undefined;
+  // FR-CAPABILITY-INVENTORY: load cached registry; provider exposes refresh.
+  const cachedRegistry = await loadRegistry(cfg.project_dir);
+  const capabilities = new DefaultCapabilityProvider({
+    ide,
+    sender,
+    projectDir: cfg.project_dir,
+    cwd: cfg.project_dir,
+    reserved: BOT_COMMANDS,
+    initial: cachedRegistry,
+  });
   const dispatcher = new Dispatcher({
     cfg,
     sender,
@@ -69,6 +86,7 @@ export async function main(_args: string[]): Promise<number> {
     session,
     streamer,
     sessionManager,
+    capabilities,
     log,
   });
 
@@ -85,10 +103,12 @@ export async function main(_args: string[]): Promise<number> {
     return 1;
   }
 
-  // FR-SETTINGS: register slash-command menu in Telegram clients.
-  await sender.setMyCommands(BOT_COMMANDS).catch((err) => {
-    log.warn("setMyCommands failed", { err: sanitizeError(err) });
-  });
+  // FR-SETTINGS + FR-CAPABILITY-INVENTORY: register slash-command menu;
+  // merge reserved commands with cached IDE capabilities (if any).
+  await sender.setMyCommands(mergeCommandList(BOT_COMMANDS, cachedRegistry))
+    .catch((err) => {
+      log.warn("setMyCommands failed", { err: sanitizeError(err) });
+    });
 
   const controller = new AbortController();
   const onSignal = () => {
