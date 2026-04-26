@@ -113,10 +113,10 @@
 - **Constraints (v1):** one concurrent turn per manager (dispatcher serializes). No per-turn timeout. Same `effortToExtraArgs` mapping as `Dispatcher` (Claude-only `--effort`).
 
 ### 3.10 `engine/tg/format.ts`
-- **Purpose:** Pure Markdown → Telegram HTML converter (FR-EVENT-STREAM). Targets TG's `parse_mode: "HTML"` rule set: minimal 3-char escape (`<`/`>`/`&`), `#..######` → `<b>`, `**bold**` → `<b>`, `*x*`/`_x_` → `<i>`, `` `x` `` → `<code>`, fenced blocks → `<pre><code class="language-…">`, `[t](u)` → `<a>`, `> q` → `<blockquote>`. Fenced blocks and `> `-blocks are protected via NUL-byte placeholders so inline passes leave their contents intact; remaining plain text is escaped so stray `<`/`>`/`&` cannot confuse the TG parser.
+- **Purpose:** Pure Markdown → Telegram HTML converter (FR-EVENT-STREAM). Targets TG's `parse_mode: "HTML"` rule set: minimal 3-char escape (`<`/`>`/`&`), `#..######` → `<b>`, `**bold**` → `<b>`, `*x*`/`_x_` → `<i>`, `` `x` `` → `<code>`, fenced blocks → `<pre><code class="language-…">`, `[t](u)` → `<a>`, `> q` → `<blockquote>`. Fenced blocks, `> `-blocks, and inline `` `code` `` spans are stashed into Private-Use-Area placeholders before bold/italic/link passes; bold/italic body classes also exclude `<` so those passes cannot reach across emitted tags (`<a>`, `<b>`, `<i>`). Remaining plain text is escaped so stray `<`/`>`/`&` cannot confuse the TG parser. Unclosed bold/italic markers stay literal (Markdown-standard semantics) — symmetric for `**` and `_`.
 - **Interfaces:** `escapeHtml(text: string): string`; `markdownToTelegramHTML(input: string|null|undefined): string`.
 - **Deps:** none.
-- **Known limitations:** `***x***` → `<i>&lt;b&gt;x&lt;/b&gt;</i>` (nested bold inside italic gets re-escaped); Markdown inside `#` headers is escaped, not nested; fenced blocks cut across a rollover boundary degrade to plain text on the boundary — acceptable (data preserved, styling only).
+- **Known limitations:** `***x***` → `<i>&lt;b&gt;x&lt;/b&gt;</i>` (nested bold inside italic gets re-escaped); Markdown inside `#` headers is escaped, not nested; fenced blocks cut across a rollover boundary degrade to plain text on the boundary — acceptable (data preserved, styling only); inline `` `code` `` spans must not contain newlines (multi-line spans degrade to literal text).
 
 ### 3.12 `engine/capabilities.ts`
 - **Purpose:** Discover IDE skills/slash-commands and expose them as TG bot commands (FR-CAPABILITY-INVENTORY). Pure CRUD over a JSON cache; discovery is delegated to `RuntimeAdapter.fetchCapabilitiesSlow`.

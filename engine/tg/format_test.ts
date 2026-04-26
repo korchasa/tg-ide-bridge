@@ -69,10 +69,13 @@ Deno.test("markdownToTelegramHTML converts headers of all levels to bold", () =>
   );
 });
 
-Deno.test("markdownToTelegramHTML closes unclosed trailing underscore italic", () => {
+Deno.test("markdownToTelegramHTML leaves unclosed underscore italic as literal", () => {
+  // Symmetric with `**unclosed bold`: an unclosed marker stays literal,
+  // matching Markdown semantics. Auto-closing was the source of false
+  // italic on names like `_internal` / paths like `_priv` at line end.
   assertEquals(
     markdownToTelegramHTML("Text with _unclosed italic"),
-    "Text with <i>unclosed italic</i>",
+    "Text with _unclosed italic",
   );
 });
 
@@ -131,4 +134,78 @@ Deno.test("markdownToTelegramHTML handles empty fenced block", () => {
 
 Deno.test("markdownToTelegramHTML keeps unclosed fence as literal text", () => {
   assertEquals(markdownToTelegramHTML("```python\n"), "```python\n");
+});
+
+Deno.test("markdownToTelegramHTML protects inline code body from italic passes", () => {
+  // Regression: italic-end-of-line regex used to sweep `_func` plus the
+  // trailing `</code>` into <i>, producing `<code><i>func</code></i>` and
+  // tripping TG with "Unmatched end tag, expected </i>, found </code>".
+  assertEquals(
+    markdownToTelegramHTML("call `_func` here"),
+    "call <code>_func</code> here",
+  );
+  assertEquals(
+    markdownToTelegramHTML("- reserved: `BOT_COMMAND_LIST`"),
+    "- reserved: <code>BOT_COMMAND_LIST</code>",
+  );
+  // Trailing inline code that ends the line must not get auto-closed italic.
+  assertEquals(
+    markdownToTelegramHTML("see `path/to/_priv`"),
+    "see <code>path/to/_priv</code>",
+  );
+});
+
+Deno.test("markdownToTelegramHTML protects link label and url from italic passes", () => {
+  // Same nesting class of bug as inline code: a `_` inside the label or a
+  // `_` in the URL must not pull `</a>` into `<i>`.
+  assertEquals(
+    markdownToTelegramHTML("see [_label](https://x.com/path)"),
+    'see <a href="https://x.com/path">_label</a>',
+  );
+  assertEquals(
+    markdownToTelegramHTML("see [link](https://x.com/_dir)"),
+    'see <a href="https://x.com/_dir">link</a>',
+  );
+  assertEquals(
+    markdownToTelegramHTML("[trailing_](https://x.com)"),
+    '<a href="https://x.com">trailing_</a>',
+  );
+});
+
+Deno.test("markdownToTelegramHTML emits well-formed nesting for mixed markers", () => {
+  // No `<i>...</code>` or `<code>...</i>` cross-tag matches anywhere in the
+  // output. This catches the class of bugs where inline-pass regexes reach
+  // into already-emitted HTML.
+  const inputs = [
+    "before `_x` after",
+    "x `a_b` y _italic_ z",
+    "_pre `code_inside` post_",
+    "`_just_underscores_`",
+    "line1 `code_one`\nline2 `_code_two`",
+    "see [_label](https://x.com/path)",
+    "see [link](https://x.com/_dir)",
+    "[trailing_](https://x.com)",
+    "line ends with `_x`",
+  ];
+  for (const input of inputs) {
+    const out = markdownToTelegramHTML(input);
+    // Every <code> opens before any </code>; each <i> / <b> closes before
+    // the surrounding <code> closes.
+    const openCode = (out.match(/<code>/g) ?? []).length;
+    const closeCode = (out.match(/<\/code>/g) ?? []).length;
+    assertEquals(
+      openCode,
+      closeCode,
+      `unbalanced <code> in: ${input} → ${out}`,
+    );
+    // No <i> / <b> may appear inside <code> or <a> bodies.
+    const tagBodyRe = /<(code|a)\b[^>]*>([\s\S]*?)<\/\1>/g;
+    for (const m of out.matchAll(tagBodyRe)) {
+      const body = m[2] ?? "";
+      assert(
+        !/<\/?[ib]>/.test(body),
+        `markdown leaked into <${m[1]}>: ${input} → ${out}`,
+      );
+    }
+  }
 });
