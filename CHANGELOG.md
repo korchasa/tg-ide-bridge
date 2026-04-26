@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [0.1.5](https://github.com/korchasa/tg-ide-bridge/compare/v0.1.4...v0.1.5) (2026-04-26)
+
+
+### Bug Fixes
+
+* **format:** prevent malformed HTML from cross-tag inline matches ([fb884f8](https://github.com/korchasa/tg-ide-bridge/commit/fb884f833a4d1b4c6e65e68f427d2788a8a3895d))
+
 ### [0.1.4](https://github.com/korchasa/tg-ide-bridge/compare/v0.1.3...v0.1.4) (2026-04-25)
 
 
