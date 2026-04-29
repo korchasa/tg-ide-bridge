@@ -58,7 +58,7 @@ Value for power users of AI IDEs: remote control of their coding assistant from 
 - **TDD + strict TS**: non-negotiable quality floor.
 
 ## Documentation Hierarchy
-1. **`AGENTS.md`**: Project vision, constraints, mandatory rules. READ-ONLY reference.
+1. **`AGENTS.md`** (`CLAUDE.md` is a symlink to it): Project vision, constraints, mandatory rules. Edits to either file affect both. READ-ONLY reference.
 2. **SRS** (`documents/requirements.md`): "What" & "Why". Source of truth for requirements.
 3. **SDS** (`documents/design.md`): "How". Architecture and implementation. Depends on SRS.
 4. **Tasks** (`documents/tasks/<YYYY-MM-DD>-<slug>.md`): Temporary plans/notes per task.
@@ -259,6 +259,7 @@ When the root cause is outside your control (missing API keys/URLs, missing gene
 ### Shell Environment
 - Always use `NO_COLOR=1` when running shell commands — ANSI escape codes waste tokens and clutter output.
 - When writing scripts, respect the `NO_COLOR` env var (https://no-color.org/) — disable ANSI colors when it is set.
+- On macOS dev machines Homebrew binaries (`deno`, `gh`, etc.) live in `/opt/homebrew/bin`, but agent shell sessions do not always have it on `PATH`. Prefix `PATH="/opt/homebrew/bin:$PATH"` for any command needing them, including chained subprocesses (`scripts/check.ts` spawns `deno`).
 
 ### Standard Interface
 - `check` — the main command for comprehensive project verification. Runs the following steps in parallel and fails on any non-zero:
