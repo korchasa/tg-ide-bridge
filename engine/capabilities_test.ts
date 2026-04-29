@@ -224,6 +224,8 @@ function fakeAdapter(): RuntimeAdapter & {
       toolUseObservation: false,
       session: false,
       capabilityInventory: true,
+      toolFilter: false,
+      reasoningEffort: false,
     },
     observed,
     invoke(opts: RuntimeInvokeOptions): Promise<RuntimeInvokeResult> {

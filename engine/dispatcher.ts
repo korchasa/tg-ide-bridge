@@ -13,15 +13,16 @@
  * currently-running IDE subprocess. All other commands serialize normally.
  */
 
-import type { Config, SupportedIde } from "./config.ts";
+import type { Config } from "./config.ts";
 import type { Sender } from "./tg/sender.ts";
 import { chunkText } from "./tg/sender.ts";
 import type { Streamer } from "./tg/streamer.ts";
 import type { TgUpdate } from "./tg/types.ts";
 import { sanitizeError } from "./log.ts";
 import type { Logger } from "./log.ts";
-import type { ExtraArgsMap, RuntimeAdapter } from "@korchasa/ai-ide-cli";
+import type { RuntimeAdapter } from "@korchasa/ai-ide-cli";
 import type { SessionStore } from "./session.ts";
+import { effortToInvokeFields } from "./effort.ts";
 import { SessionManager } from "./ide_session.ts";
 import { type CapabilityProvider, lookupOriginal } from "./capabilities.ts";
 import {
@@ -456,7 +457,6 @@ export class Dispatcher {
     if (this.#session) resume = await this.#session.loadSession();
     const live = await streamer.open(chatId, threadId);
     try {
-      const extraArgs = effortToExtraArgs(this.#cfg.ide, eff.effort);
       const res = await ide.invoke({
         taskPrompt: text,
         resumeSessionId: resume ?? undefined,
@@ -466,7 +466,7 @@ export class Dispatcher {
         retryDelaySeconds: eff.retryDelaySeconds,
         permissionMode: eff.permissionMode,
         model: eff.model,
-        extraArgs,
+        ...effortToInvokeFields(this.#cfg.ide, eff.effort),
         signal: ctrl.signal,
         onEvent: (event) => live.appendEvent(event),
       });
@@ -514,7 +514,6 @@ export class Dispatcher {
     if (this.#session) resume = await this.#session.loadSession();
     try {
       // FR-CMD-EXEC
-      const extraArgs = effortToExtraArgs(this.#cfg.ide, eff.effort);
       const res = await ide.invoke({
         taskPrompt: text,
         resumeSessionId: resume ?? undefined,
@@ -524,7 +523,7 @@ export class Dispatcher {
         retryDelaySeconds: eff.retryDelaySeconds,
         permissionMode: eff.permissionMode,
         model: eff.model,
-        extraArgs,
+        ...effortToInvokeFields(this.#cfg.ide, eff.effort),
         signal: ctrl.signal,
       });
       if (!res.output) {
@@ -586,15 +585,4 @@ export class Dispatcher {
       },
     };
   }
-}
-
-// Claude Code accepts reasoning effort via `--effort`; other runtimes have no
-// equivalent flag in `ai-ide-cli` and would reject it.
-function effortToExtraArgs(
-  ide: SupportedIde,
-  effort?: string,
-): ExtraArgsMap | undefined {
-  if (!effort) return undefined;
-  if (ide !== "claude") return undefined;
-  return { "--effort": effort };
 }

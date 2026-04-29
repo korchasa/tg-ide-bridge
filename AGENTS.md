@@ -79,6 +79,7 @@ Maps source code paths to documentation sections that describe them. Used by com
 - `engine/dispatcher.ts` → SDS §3.7; SRS FR-CMD-EXEC, FR-SESSION-RESUME, FR-EVENT-STREAM, FR-SETTINGS.
 - `engine/ide_session.ts` → SDS §3.11; SRS FR-CMD-EXEC, FR-SESSION-RESUME, FR-EVENT-STREAM.
 - `engine/settings.ts` → SDS §3.9; SRS FR-SETTINGS.
+- `engine/effort.ts` → SDS §3.13; SRS FR-SETTINGS.
 - `engine/log.ts` → SDS §6 (Logs); redaction covers SRS Non-Functional §4 Sec.
 
 If this section is empty or absent, commit workflows use a default mapping:

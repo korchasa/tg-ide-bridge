@@ -24,7 +24,6 @@
  */
 
 import {
-  type ExtraArgsMap,
   extractSessionContent,
   type RuntimeAdapter,
   type RuntimeSession,
@@ -32,6 +31,7 @@ import {
   SYNTHETIC_TURN_END,
 } from "@korchasa/ai-ide-cli";
 import type { SupportedIde } from "./config.ts";
+import { effortToInvokeFields } from "./effort.ts";
 import type { Logger } from "./log.ts";
 import { sanitizeError } from "./log.ts";
 import type { SessionStore } from "./session.ts";
@@ -206,7 +206,6 @@ export class SessionManager {
   async #openSession(snapshot: SessionSnapshot): Promise<void> {
     const abort = new AbortController();
     const resumeId = await this.#loadResumeId();
-    const extraArgs = effortToExtraArgs(this.#ideId, snapshot.effort);
     this.#log.debug("session: opening", {
       ide: this.#ideId,
       resume: resumeId !== null,
@@ -218,7 +217,7 @@ export class SessionManager {
       resumeSessionId: resumeId ?? undefined,
       model: snapshot.model,
       permissionMode: snapshot.permissionMode,
-      extraArgs,
+      ...effortToInvokeFields(this.#ideId, snapshot.effort),
       signal: abort.signal,
       onStderr: (chunk) => this.#appendStderr(chunk),
     });
@@ -389,16 +388,4 @@ export class SessionManager {
       }
     });
   }
-}
-
-// Claude-specific; other runtimes have no `--effort` flag in ai-ide-cli.
-// Duplicate of dispatcher.ts#effortToExtraArgs — kept local so SessionManager
-// has no dispatcher coupling.
-function effortToExtraArgs(
-  ide: SupportedIde,
-  effort?: string,
-): ExtraArgsMap | undefined {
-  if (!effort) return undefined;
-  if (ide !== "claude") return undefined;
-  return { "--effort": effort };
 }

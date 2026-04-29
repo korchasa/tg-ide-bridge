@@ -135,6 +135,8 @@ class FakeSessionAdapter implements RuntimeAdapter {
     toolUseObservation: false,
     session: true,
     capabilityInventory: false,
+    toolFilter: false,
+    reasoningEffort: false,
   };
   openedSessions: FakeSession[] = [];
   nextInitialId = "sess-init";
@@ -630,6 +632,74 @@ Deno.test("SessionManager falls back to assistant text when turn-end raw has no 
     const edits = calls.filter((c) => c.method === "editMessageText");
     const finalText = edits.at(-1)!.body.text as string;
     assertStringIncludes(finalText, "assembled reply");
+    await mgr.close();
+  });
+});
+
+Deno.test("SessionManager passes typed reasoningEffort for codex on openSession", async () => {
+  await withTempDir(async (dir) => {
+    const { fetchFn } = fakeFetch();
+    const sender = new Sender("t", { fetchFn });
+    const streamer = new Streamer({
+      sender,
+      clock: noDelayClock(),
+      minEditIntervalMs: 0,
+    });
+    const ide = new FakeSessionAdapter();
+    const mgr = new SessionManager({
+      ide,
+      ideId: "codex",
+      cwd: dir,
+      log: silentLog(),
+    });
+
+    const live = await streamer.open(1);
+    const turn = mgr.runTurn({
+      live,
+      text: "ping",
+      settings: { ...defaultSettings(), effort: "high" },
+      stopSignal: new AbortController().signal,
+    });
+    await new Promise((r) => setTimeout(r, 5));
+    const sess = ide.lastSession();
+    assertEquals(sess.opts.reasoningEffort, "high");
+    assertEquals(sess.opts.extraArgs, undefined);
+    sess.emitTurnEnd({ type: "turn/completed" });
+    await turn;
+    await mgr.close();
+  });
+});
+
+Deno.test("SessionManager keeps --effort extraArgs for claude on openSession", async () => {
+  await withTempDir(async (dir) => {
+    const { fetchFn } = fakeFetch();
+    const sender = new Sender("t", { fetchFn });
+    const streamer = new Streamer({
+      sender,
+      clock: noDelayClock(),
+      minEditIntervalMs: 0,
+    });
+    const ide = new FakeSessionAdapter();
+    const mgr = new SessionManager({
+      ide,
+      ideId: "claude",
+      cwd: dir,
+      log: silentLog(),
+    });
+
+    const live = await streamer.open(1);
+    const turn = mgr.runTurn({
+      live,
+      text: "ping",
+      settings: { ...defaultSettings(), effort: "xhigh" },
+      stopSignal: new AbortController().signal,
+    });
+    await new Promise((r) => setTimeout(r, 5));
+    const sess = ide.lastSession();
+    assertEquals(sess.opts.extraArgs, { "--effort": "xhigh" });
+    assertEquals(sess.opts.reasoningEffort, undefined);
+    sess.emitTurnEnd({ type: "result", is_error: false, result: "ok" });
+    await turn;
     await mgr.close();
   });
 });

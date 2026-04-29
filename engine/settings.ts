@@ -97,9 +97,10 @@ export const WHITELISTS: Record<SupportedIde, IdeWhitelist> = {
     // Common OpenAI models; codex accepts any via `-m`, whitelist only
     // constrains the TG `/model` command surface.
     models: ["gpt-5", "gpt-5-codex", "o3", "o4-mini"],
-    // Codex reasoning effort is tuned via `-c model_reasoning_effort=…`;
-    // not mapped from TG `/effort` in v1.
-    efforts: [],
+    // Mirrors ai-ide-cli's typed `ReasoningEffort` enum (1:1 map onto
+    // Codex's native `model_reasoning_effort`). Forwarded as the typed
+    // `reasoningEffort` field, not via `extraArgs`.
+    efforts: ["minimal", "low", "medium", "high"],
     // ai-ide-cli translates these to `--sandbox`/`approval_policy` overrides.
     permissionModes: [
       "default",

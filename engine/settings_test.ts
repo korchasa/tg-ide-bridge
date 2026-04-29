@@ -65,6 +65,13 @@ Deno.test("validateEffort accepts claude whitelist", () => {
   }
 });
 
+Deno.test("validateEffort accepts codex whitelist (typed ReasoningEffort)", () => {
+  for (const e of WHITELISTS.codex.efforts) {
+    assert(validateEffort("codex", e).ok);
+  }
+  assertEquals(WHITELISTS.codex.efforts, ["minimal", "low", "medium", "high"]);
+});
+
 Deno.test("validatePermissionMode rejects for cursor (empty whitelist)", () => {
   const r = validatePermissionMode("cursor", "acceptEdits");
   assert(!r.ok);

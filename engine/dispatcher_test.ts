@@ -98,6 +98,8 @@ class FakeAdapter implements RuntimeAdapter {
     toolUseObservation: false,
     session: false,
     capabilityInventory: false,
+    toolFilter: false,
+    reasoningEffort: false,
   };
   calls: RuntimeInvokeOptions[] = [];
   result: RuntimeInvokeResult = { output: okOutput() };
@@ -228,6 +230,46 @@ Deno.test("Dispatcher omits --effort for non-claude ides", async () => {
     });
     await d.handle(msg("ping"));
     assertEquals(ide.calls[0]!.extraArgs, undefined);
+    assertEquals(ide.calls[0]!.reasoningEffort, undefined);
+  });
+});
+
+Deno.test("Dispatcher maps effort to typed reasoningEffort for codex", async () => {
+  await withTempDir(async (dir) => {
+    const { fetchFn } = fakeFetch();
+    const sender = new Sender("t", { fetchFn });
+    const ide = new FakeAdapter();
+    const session = new SessionStore(dir, "codex");
+    await session.saveSettings({ effort: "high" });
+    const d = new Dispatcher({
+      cfg: cfg({ ide: "codex", project_dir: dir }),
+      sender,
+      ide,
+      session,
+      log: silentLog(),
+    });
+    await d.handle(msg("ping"));
+    const call = ide.calls[0]!;
+    assertEquals(call.reasoningEffort, "high");
+    assertEquals(call.extraArgs, undefined);
+  });
+});
+
+Deno.test("Dispatcher /effort high on codex stores setting", async () => {
+  await withTempDir(async (dir) => {
+    const { fetchFn, calls } = fakeFetch();
+    const sender = new Sender("t", { fetchFn });
+    const session = new SessionStore(dir, "codex");
+    const d = new Dispatcher({
+      cfg: cfg({ ide: "codex", project_dir: dir }),
+      sender,
+      session,
+      log: silentLog(),
+    });
+    await d.handle(msg("/effort high"));
+    const reply = calls.at(-1)!.body.text as string;
+    assertStringIncludes(reply, "effort set");
+    assertEquals((await session.loadSettings()).effort, "high");
   });
 });
 

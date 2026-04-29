@@ -18,6 +18,8 @@ function sessionCapableAdapter(): RuntimeAdapter {
       toolUseObservation: false,
       session: true,
       capabilityInventory: false,
+      toolFilter: false,
+      reasoningEffort: false,
     },
     invoke: () => Promise.resolve({ error: "unused" }),
     launchInteractive: () => Promise.resolve({ exitCode: 0 }),
