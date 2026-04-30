@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [0.1.6](https://github.com/korchasa/tg-ide-bridge/compare/v0.1.5...v0.1.6) (2026-04-30)
+
+
+### Features
+
+* **engine:** codex /effort via typed reasoningEffort, ai-ide-cli 0.5.8 ([191f8d4](https://github.com/korchasa/tg-ide-bridge/commit/191f8d4dcbdaa8f536522081eec50a9501537841))
+* **engine:** widen JSR exports for library-mode embedding ([1cddb6c](https://github.com/korchasa/tg-ide-bridge/commit/1cddb6cd79360d011febbec87f182e0a14e254fe)), closes [#1](https://github.com/korchasa/tg-ide-bridge/issues/1)
+
+
+### Documentation
+
+* **agents:** note CLAUDE.md symlink and Homebrew PATH workaround ([917b0de](https://github.com/korchasa/tg-ide-bridge/commit/917b0de685c3d124a355b9501ec2d45381c029ec))
+
 ### [0.1.5](https://github.com/korchasa/tg-ide-bridge/compare/v0.1.4...v0.1.5) (2026-04-26)
 
 
