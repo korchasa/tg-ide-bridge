@@ -1,11 +1,27 @@
 {
   "name": "@korchasa/tg-ide-bridge",
   "version": "0.1.5",
-  "exports": "./cli.ts",
+  "exports": {
+    ".": "./cli.ts",
+    "./dispatcher": "./dispatcher.ts",
+    "./session": "./ide_session.ts",
+    "./session-store": "./session.ts",
+    "./config": "./config.ts",
+    "./settings": "./settings.ts",
+    "./capabilities": "./capabilities.ts",
+    "./log": "./log.ts",
+    "./auth": "./auth.ts",
+    "./effort": "./effort.ts",
+    "./tg/sender": "./tg/sender.ts",
+    "./tg/streamer": "./tg/streamer.ts",
+    "./tg/poller": "./tg/poller.ts",
+    "./tg/types": "./tg/types.ts"
+  },
   "license": "MIT",
   "publish": {
     "exclude": [
-      "**/*_test.ts"
+      "**/*_test.ts",
+      "**/*_test_util.ts"
     ]
   }
 }

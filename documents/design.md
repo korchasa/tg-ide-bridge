@@ -35,6 +35,11 @@
 
 ## 3. Components
 
+### 3.0 Library exports (`engine/deno.json`)
+- **Purpose:** Embedding hosts (e.g. `flowai-center`) need direct access to daemon internals to run a `Dispatcher` per chat + `SessionManager` per turn in the same Deno process. JSR map exposes per-module subpaths.
+- **Interfaces:** `.` → `cli.ts` (`main`); `./dispatcher`, `./session` (SessionManager), `./session-store` (SessionStore), `./config`, `./settings`, `./capabilities`, `./log`, `./auth`, `./effort`, `./tg/sender`, `./tg/streamer`, `./tg/poller`, `./tg/types`.
+- **Constraints:** No module-level mutable state — multiple `Dispatcher`/`SessionManager` instances may coexist in one host process. CLI consumers (`.`) unchanged.
+
 ### 3.1 `engine/cli.ts`
 - **Purpose:** Entrypoint. Loads env-based config, constructs daemon, runs main loop. No CLI flags — all configuration via env vars (loaded from `.env` at task level via `deno run --env-file=.env`). Instantiates `SessionManager` when `ide.capabilities.session` is true (all runtimes in `ai-ide-cli@^0.5.2`) and passes it to `Dispatcher`. On SIGINT/SIGTERM awaits `dispatcher.close()` so the long-lived IDE subprocess receives SIGTERM and persist-writes drain.
 - **Interfaces:** `main(args: string[]): Promise<number>`.
